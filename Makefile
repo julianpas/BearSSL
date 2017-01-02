@@ -26,7 +26,7 @@
 # Configurable elements: C compiler and flags, linker flags, static
 # library archival command.
 
-CC = gcc
+CC = $(PREFIX)gcc
 CFLAGS = -W -Wall -Os -fPIC -I src -I inc
 #CFLAGS = -W -Wall -g -fPIC -I src -I inc
 LDFLAGS = 
