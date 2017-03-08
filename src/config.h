@@ -42,12 +42,31 @@
  */
 
 /*
+ * When BR_LOMUL is enabled, then multiplications of 32-bit values whose
+ * result are truncated to the low 32 bits are assumed to be
+ * substantially more efficient than 32-bit multiplications that yield
+ * 64-bit results. This is typically the case on low-end ARM Cortex M
+ * systems (M0, M0+, M1, and arguably M3 and M4 as well).
+ *
+#define BR_LOMUL   1
+ */
+
+/*
  * When BR_SLOW_MUL is enabled, multiplications are assumed to be
  * substantially slow with regards to other integer operations, thus
  * making it worth to make more operations for a given task if it allows
  * using less multiplications.
  *
 #define BR_SLOW_MUL   1
+ */
+
+/*
+ * When BR_SLOW_MUL15 is enabled, short multplications (on 15-bit words)
+ * are assumed to be substantially slow with regards to other integer
+ * operations, thus making it worth to make more integer operations if
+ * it allows using less multiplications.
+ *
+#define BR_SLOW_MUL15   1
  */
 
 /*
@@ -58,6 +77,25 @@
  * multiplication opcode takes a variable number of cycles to complete.
  *
 #define BR_CT_MUL31   1
+ */
+
+/*
+ * When BR_CT_MUL15 is enabled, multiplications of 15-bit values (held
+ * in 32-bit words) use an alternate implementation which is slower and
+ * larger than the normal multiplication, but should ensure
+ * constant-time multiplications on most/all architectures where the
+ * basic multiplication is not constant-time.
+#define BR_CT_MUL15   1
+ */
+
+/*
+ * When BR_NO_ARITH_SHIFT is enabled, arithmetic right shifts (with sign
+ * extension) are performed with a sequence of operations which is bigger
+ * and slower than a simple right shift on a signed value. This avoids
+ * relying on an implementation-defined behaviour. However, most if not
+ * all C compilers use sign extension for right shifts on signed values,
+ * so this alternate macro is disabled by default.
+#define BR_NO_ARITH_SHIFT   1
  */
 
 /*
@@ -97,6 +135,41 @@
  * former takes precedence.
  *
 #define BR_USE_WIN32_TIME   1
+ */
+
+/*
+ * When BR_ARMEL_CORTEXM_GCC is enabled, some operations are replaced with
+ * inline assembly which is shorter and/or faster. This should be used
+ * only when all of the following are true:
+ *   - target architecture is ARM in Thumb mode
+ *   - target endianness is little-endian
+ *   - compiler is GCC (or GCC-compatible for inline assembly syntax)
+ *
+ * This is meant for the low-end cores (Cortex M0, M0+, M1, M3).
+ * Note: if BR_LOMUL is not explicitly enabled or disabled, then
+ * enabling BR_ARMEL_CORTEXM_GCC also enables BR_LOMUL.
+ *
+#define BR_ARMEL_CORTEXM_GCC   1
+ */
+
+/*
+ * When BR_AES_X86NI is enabled, the AES implementation using the x86 "NI"
+ * instructions (dedicated AES opcodes) will be compiled. If this is not
+ * enabled explicitly, then that AES implementation will be compiled only
+ * if a compatible compiler is detected. If set explicitly to 0, the
+ * implementation will not be compiled at all.
+ *
+#define BR_AES_X86NI   1
+ */
+
+/*
+ * When BR_POWER8 is enabled, the AES implementation using the POWER ISA
+ * 2.07 opcodes (available on POWER8 processors and later) is compiled.
+ * If this is not enabled explicitly, then that implementation will be
+ * compiled only if a compatible compiler is detected, _and_ the target
+ * architecture is POWER8 or later.
+ *
+#define BR_POWER8   1
  */
 
 #endif

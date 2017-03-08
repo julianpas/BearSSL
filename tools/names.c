@@ -271,6 +271,221 @@ const cipher_suite cipher_suites[] = {
 	{ NULL, 0, 0, NULL }
 };
 
+static const struct {
+	int id;
+	const char *name;
+} curves[] = {
+	{ BR_EC_sect163k1,
+	  "sect163k1" },
+	{ BR_EC_sect163r1,
+	  "sect163r1" },
+	{ BR_EC_sect163r2,
+	  "sect163r2" },
+	{ BR_EC_sect193r1,
+	  "sect193r1" },
+	{ BR_EC_sect193r2,
+	  "sect193r2" },
+	{ BR_EC_sect233k1,
+	  "sect233k1" },
+	{ BR_EC_sect233r1,
+	  "sect233r1" },
+	{ BR_EC_sect239k1,
+	  "sect239k1" },
+	{ BR_EC_sect283k1,
+	  "sect283k1" },
+	{ BR_EC_sect283r1,
+	  "sect283r1" },
+	{ BR_EC_sect409k1,
+	  "sect409k1" },
+	{ BR_EC_sect409r1,
+	  "sect409r1" },
+	{ BR_EC_sect571k1,
+	  "sect571k1" },
+	{ BR_EC_sect571r1,
+	  "sect571r1" },
+	{ BR_EC_secp160k1,
+	  "secp160k1" },
+	{ BR_EC_secp160r1,
+	  "secp160r1" },
+	{ BR_EC_secp160r2,
+	  "secp160r2" },
+	{ BR_EC_secp192k1,
+	  "secp192k1" },
+	{ BR_EC_secp192r1,
+	  "secp192r1" },
+	{ BR_EC_secp224k1,
+	  "secp224k1" },
+	{ BR_EC_secp224r1,
+	  "secp224r1" },
+	{ BR_EC_secp256k1,
+	  "secp256k1" },
+	{ BR_EC_secp256r1,
+	  "secp256r1 (P-256)" },
+	{ BR_EC_secp384r1,
+	  "secp384r1 (P-384)" },
+	{ BR_EC_secp521r1,
+	  "secp521r1 (P-521)" },
+	{ BR_EC_brainpoolP256r1,
+	  "brainpoolP256r1" },
+	{ BR_EC_brainpoolP384r1,
+	  "brainpoolP384r1" },
+	{ BR_EC_brainpoolP512r1,
+	  "brainpoolP512r1" },
+	{ BR_EC_curve25519,
+	  "Curve25519" },
+	{ BR_EC_curve448,
+	  "Curve448" },
+	{ 0, 0 }
+};
+
+static const struct {
+	const char *long_name;
+	const char *short_name;
+	const void *impl;
+} algo_names[] = {
+	/* Block ciphers */
+	{ "aes_big_cbcenc",    "big",         &br_aes_big_cbcenc_vtable },
+	{ "aes_big_cbcdec",    "big",         &br_aes_big_cbcdec_vtable },
+	{ "aes_big_ctr",       "big",         &br_aes_big_ctr_vtable },
+	{ "aes_small_cbcenc",  "small",       &br_aes_small_cbcenc_vtable },
+	{ "aes_small_cbcdec",  "small",       &br_aes_small_cbcdec_vtable },
+	{ "aes_small_ctr",     "small",       &br_aes_small_ctr_vtable },
+	{ "aes_ct_cbcenc",     "ct",          &br_aes_ct_cbcenc_vtable },
+	{ "aes_ct_cbcdec",     "ct",          &br_aes_ct_cbcdec_vtable },
+	{ "aes_ct_ctr",        "ct",          &br_aes_ct_ctr_vtable },
+	{ "aes_ct64_cbcenc",   "ct64",        &br_aes_ct64_cbcenc_vtable },
+	{ "aes_ct64_cbcdec",   "ct64",        &br_aes_ct64_cbcdec_vtable },
+	{ "aes_ct64_ctr",      "ct64",        &br_aes_ct64_ctr_vtable },
+
+	{ "des_tab_cbcenc",    "tab",         &br_des_tab_cbcenc_vtable },
+	{ "des_tab_cbcdec",    "tab",         &br_des_tab_cbcdec_vtable },
+	{ "des_ct_cbcenc",     "ct",          &br_des_ct_cbcenc_vtable },
+	{ "des_ct_cbcdec",     "ct",          &br_des_ct_cbcdec_vtable },
+
+	{ "chacha20_ct",       "ct",          &br_chacha20_ct_run },
+
+	{ "ghash_ctmul",       "ctmul",       &br_ghash_ctmul },
+	{ "ghash_ctmul32",     "ctmul32",     &br_ghash_ctmul32 },
+	{ "ghash_ctmul64",     "ctmul64",     &br_ghash_ctmul64 },
+
+	{ "poly1305_ctmul",    "ctmul",       &br_poly1305_ctmul_run },
+	{ "poly1305_ctmul32",  "ctmul32",     &br_poly1305_ctmul32_run },
+
+	{ "ec_all_m15",        "all_m15",     &br_ec_all_m15 },
+	{ "ec_all_m31",        "all_m31",     &br_ec_all_m31 },
+	{ "ec_c25519_i15",     "c25519_i15",  &br_ec_c25519_i15 },
+	{ "ec_c25519_i31",     "c25519_i31",  &br_ec_c25519_i31 },
+	{ "ec_c25519_m15",     "c25519_m15",  &br_ec_c25519_m15 },
+	{ "ec_c25519_m31",     "c25519_m31",  &br_ec_c25519_m31 },
+	{ "ec_p256_m15",       "p256_m15",    &br_ec_p256_m15 },
+	{ "ec_p256_m31",       "p256_m31",    &br_ec_p256_m31 },
+	{ "ec_prime_i15",      "prime_i15",   &br_ec_prime_i15 },
+	{ "ec_prime_i31",      "prime_i31",   &br_ec_prime_i31 },
+
+	{ "ecdsa_i15_sign_asn1",  "i15_asn1",  &br_ecdsa_i15_sign_asn1 },
+	{ "ecdsa_i15_sign_raw",   "i15_raw",   &br_ecdsa_i15_sign_raw },
+	{ "ecdsa_i31_sign_asn1",  "i31_asn1",  &br_ecdsa_i31_sign_asn1 },
+	{ "ecdsa_i31_sign_raw",   "i31_raw",   &br_ecdsa_i31_sign_raw },
+	{ "ecdsa_i15_vrfy_asn1",  "i15_asn1",  &br_ecdsa_i15_vrfy_asn1 },
+	{ "ecdsa_i15_vrfy_raw",   "i15_raw",   &br_ecdsa_i15_vrfy_raw },
+	{ "ecdsa_i31_vrfy_asn1",  "i31_asn1",  &br_ecdsa_i31_vrfy_asn1 },
+	{ "ecdsa_i31_vrfy_raw",   "i31_raw",   &br_ecdsa_i31_vrfy_raw },
+
+	{ "rsa_i15_pkcs1_sign",   "i15",       &br_rsa_i15_pkcs1_sign },
+	{ "rsa_i31_pkcs1_sign",   "i31",       &br_rsa_i31_pkcs1_sign },
+	{ "rsa_i32_pkcs1_sign",   "i32",       &br_rsa_i32_pkcs1_sign },
+	{ "rsa_i15_pkcs1_vrfy",   "i15",       &br_rsa_i15_pkcs1_vrfy },
+	{ "rsa_i31_pkcs1_vrfy",   "i31",       &br_rsa_i31_pkcs1_vrfy },
+	{ "rsa_i32_pkcs1_vrfy",   "i32",       &br_rsa_i32_pkcs1_vrfy },
+
+	{ 0, 0, 0 }
+};
+
+static const struct {
+	const char *long_name;
+	const char *short_name;
+	const void *(*get)(void);
+} algo_names_dyn[] = {
+	{ "aes_pwr8_cbcenc",   "pwr8",
+		(const void *(*)(void))&br_aes_pwr8_cbcenc_get_vtable },
+	{ "aes_pwr8_cbcdec",   "pwr8",
+		(const void *(*)(void))&br_aes_pwr8_cbcdec_get_vtable },
+	{ "aes_pwr8_ctr",      "pwr8",
+		(const void *(*)(void))&br_aes_pwr8_ctr_get_vtable },
+	{ "aes_x86ni_cbcenc",  "x86ni",
+		(const void *(*)(void))&br_aes_x86ni_cbcenc_get_vtable },
+	{ "aes_x86ni_cbcdec",  "x86ni",
+		(const void *(*)(void))&br_aes_x86ni_cbcdec_get_vtable },
+	{ "aes_x86ni_ctr",     "x86ni",
+		(const void *(*)(void))&br_aes_x86ni_ctr_get_vtable },
+	{ "ghash_pclmul",      "pclmul",
+		(const void *(*)(void))&br_ghash_pclmul_get },
+	{ "ghash_pwr8",        "pwr8",
+		(const void *(*)(void))&br_ghash_pwr8_get },
+	{ 0, 0, 0, }
+};
+
+/* see brssl.h */
+const char *
+get_algo_name(const void *impl, int long_name)
+{
+	size_t u;
+
+	for (u = 0; algo_names[u].long_name; u ++) {
+		if (impl == algo_names[u].impl) {
+			return long_name
+				? algo_names[u].long_name
+				: algo_names[u].short_name;
+		}
+	}
+	for (u = 0; algo_names_dyn[u].long_name; u ++) {
+		if (impl == algo_names_dyn[u].get()) {
+			return long_name
+				? algo_names_dyn[u].long_name
+				: algo_names_dyn[u].short_name;
+		}
+	}
+	return "UNKNOWN";
+}
+
+/* see brssl.h */
+const char *
+get_curve_name(int id)
+{
+	size_t u;
+
+	for (u = 0; curves[u].name; u ++) {
+		if (curves[u].id == id) {
+			return curves[u].name;
+		}
+	}
+	return NULL;
+}
+
+/* see brssl.h */
+int
+get_curve_name_ext(int id, char *dst, size_t len)
+{
+	const char *name;
+	char tmp[30];
+	size_t n;
+
+	name = get_curve_name(id);
+	if (name == NULL) {
+		sprintf(tmp, "unknown (%d)", id);
+		name = tmp;
+	}
+	n = 1 + strlen(name);
+	if (n > len) {
+		if (len > 0) {
+			dst[0] = 0;
+		}
+		return -1;
+	}
+	memcpy(dst, name, n);
+	return 0;
+}
+
 /* see brssl.h */
 const char *
 get_suite_name(unsigned suite)
@@ -306,6 +521,21 @@ get_suite_name_ext(unsigned suite, char *dst, size_t len)
 		return -1;
 	}
 	memcpy(dst, name, n);
+	return 0;
+}
+
+/* see brssl.h */
+int
+uses_ecdhe(unsigned suite)
+{
+	size_t u;
+
+	for (u = 0; cipher_suites[u].name; u ++) {
+		if (cipher_suites[u].suite == suite) {
+			return (cipher_suites[u].req
+				& (REQ_ECDHE_RSA | REQ_ECDHE_ECDSA)) != 0;
+		}
+	}
 	return 0;
 }
 

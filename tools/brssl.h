@@ -212,6 +212,23 @@ extern const hash_function hash_functions[];
 unsigned parse_hash_functions(const char *arg);
 
 /*
+ * Get a curve name (by ID). If the curve ID is not known, this returns
+ * NULL.
+ */
+const char *get_curve_name(int id);
+
+/*
+ * Get a curve name (by ID). The name is written in the provided buffer
+ * (zero-terminated). If the curve ID is not known, the name is
+ * "unknown (***)" where "***" is the decimal value of the identifier.
+ * If the name does not fit in the provided buffer, then dst[0] is set
+ * to 0 (unless len is 0, in which case nothing is written), and -1 is
+ * returned. Otherwise, the name is written in dst[] (with a terminating
+ * 0), and this function returns 0.
+ */
+int get_curve_name_ext(int id, char *dst, size_t len);
+
+/*
  * Type for a known cipher suite.
  */
 typedef struct {
@@ -269,6 +286,11 @@ const char *get_suite_name(unsigned suite);
  * 0), and this function returns 0.
  */
 int get_suite_name_ext(unsigned suite, char *dst, size_t len);
+
+/*
+ * Tell whether a cipher suite uses ECDHE key exchange.
+ */
+int uses_ecdhe(unsigned suite);
 
 /*
  * Print out all known names (for protocol versions, cipher suites...).
@@ -450,8 +472,23 @@ const br_hash_class *get_hash_impl(int id);
 const char *find_error_name(int err, const char **comment);
 
 /*
+ * Find the symbolic name for an algorithm implementation. Provided
+ * pointer should be a pointer to a vtable or to a function, where
+ * appropriate. If not recognised, then the string "UNKNOWN" is returned.
+ *
+ * If 'long_name' is non-zero, then the returned name recalls the
+ * algorithm type as well; otherwise, only the core implementation name
+ * is returned (e.g. the long name could be 'aes_big_cbcenc' while the
+ * short name is 'big').
+ */
+const char *get_algo_name(const void *algo, int long_name);
+
+/*
  * Run a SSL engine, with a socket connected to the peer, and using
  * stdin/stdout to exchange application data.
+ *
+ * To help with Win32 compatibility, the socket descriptor is provided
+ * as an "unsigned long" value.
  *
  * Returned value:
  *    0        SSL connection closed successfully
@@ -459,7 +496,8 @@ const char *find_error_name(int err, const char **comment);
  *   -1        early socket close
  *   -2        stdout was closed, or something failed badly
  */
-int run_ssl_engine(br_ssl_engine_context *eng, int fd, unsigned flags);
+int run_ssl_engine(br_ssl_engine_context *eng,
+	unsigned long fd, unsigned flags);
 
 #define RUN_ENGINE_VERBOSE     0x0001  /* enable verbose messages */
 #define RUN_ENGINE_TRACE       0x0002  /* hex dump of records */

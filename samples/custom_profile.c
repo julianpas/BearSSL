@@ -53,6 +53,8 @@ example_client_profile(br_ssl_client_context *cc
 	 * by BearSSL; trim it done to your needs.
 	 */
 	static const uint16_t suites[] = {
+		BR_TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
+		BR_TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
 		BR_TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
 		BR_TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
 		BR_TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
@@ -133,6 +135,15 @@ example_client_profile(br_ssl_client_context *cc
 	 * -- With TLS 1.2, cipher suites with a name ending in "SHA"
 	 *    require both SHA-256 and SHA-1.
 	 *
+	 * Moreover, these hash functions are also used to compute
+	 * hashes supporting signatures on the server side (for ECDHE_*
+	 * cipher suites), and on the client side (for client
+	 * certificates, except in the case of full static ECDH). In TLS
+	 * 1.0 and 1.1, SHA-1 (and also MD5) will be used, but with TLS
+	 * 1.2 these hash functions are negotiated between client and
+	 * server; SHA-256 and/or SHA-384 should be sufficient in
+	 * practice.
+	 *
 	 * Note that with current implementations, SHA-224 and SHA-256
 	 * share the same file, so if you use one, you may have the other
 	 * one with no additional overhead. Similarly, SHA-384 and SHA-512
@@ -155,7 +166,7 @@ example_client_profile(br_ssl_client_context *cc
 		(sizeof suites) / (sizeof suites[0]));
 
 	/*
-	 * Public-key algorithm imeplementations.
+	 * Public-key algorithm implementations.
 	 *
 	 * -- RSA public core ("rsapub") is needed for "RSA" key exchange
 	 *    (cipher suites whose name starts with TLS_RSA).
@@ -168,15 +179,63 @@ example_client_profile(br_ssl_client_context *cc
 	 *    cipher suites).
 	 *
 	 * -- ECDSA signature verification is needed for "ECDHE_ECDSA"
-	 *    cipher suites (but not for ECDH_ECDSA or ECDH_RSA).
+	 *    cipher suites (but not for ECDHE_RSA, ECDH_ECDSA or ECDH_RSA).
 	 *
-	 * The RSA code comes in two variants, called "i31" and "i32".
-	 * Right now, the "i31" is somewhat faster.
+	 * Normaly, you use the "default" implementations, obtained
+	 * through relevant function calls. These functions return
+	 * implementations that are deemed "best" for the current
+	 * platform, where "best" means "fastest within constant-time
+	 * implementations". Selecting the default implementation is a
+	 * mixture of compile-time and runtime checks.
+	 *
+	 * Nevertheless, specific implementations may be selected
+	 * explicitly, e.g. to use code which is slower but with a
+	 * smaller footprint.
+	 *
+	 * The RSA code comes in three variants, called "i15", "i31" and
+	 * "i32". The "i31" code is somewhat faster than the "i32" code.
+	 * Usually, "i31" is faster than "i15", except on some specific
+	 * architectures (ARM Cortex M0, M0+, M1 and M3) where the "i15"
+	 * should be prefered (the "i15" code is constant-time, while
+	 * the "i31" is not, and the "i15" code is faster anyway).
+	 *
+	 * ECDSA code also comes in "i15" and "i31" variants. As in the
+	 * case of RSA, the "i31" code is faster, except on the small
+	 * ARM Cortex M, where the "i15" code is faster and safer.
+	 *
+	 * There are no less than 10 elliptic curve implementations:
+	 *
+	 *  - ec_c25519_i15, ec_c25519_i31, ec_c25519_m15 and ec_c25519_m31
+	 *    implement Curve25519.
+	 *
+	 *  - ec_p256_m15 and ec_p256_m31 implement NIST curve P-256.
+	 *
+	 *  - ec_prime_i15 and ec_prime_i31 implement NIST curves P-256,
+	 *    P-384 and P-521.
+	 *
+	 *  - ec_all_m15 is an aggregate implementation that uses
+	 *    ec_c25519_m15, ec_p256_m15 and ec_prime_i15.
+	 *
+	 *  - ec_all_m31 is an aggregate implementation that uses
+	 *    ec_c25519_m31, ec_p256_m31 and ec_prime_i31.
+	 *
+	 * For a given curve, "m15" is faster than "i15" (but possibly
+	 * with a larger code footprint) and "m31" is faster than "i31"
+	 * (there again with a larger code footprint). For best
+	 * performance, use ec_all_m31, except on the small ARM Cortex M
+	 * where ec_all_m15 should be used. Referencing the other
+	 * implementations directly will result in smaller code, but
+	 * support for fewer curves and possibly lower performance.
 	 */
+	br_ssl_client_set_default_rsapub(cc);
+	br_ssl_engine_set_default_rsavrfy(&cc->eng);
+	br_ssl_engine_set_default_ecdsa(&cc->eng);
+	/* Alternate: set implementations explicitly.
 	br_ssl_client_set_rsapub(cc, &br_rsa_i31_public);
 	br_ssl_client_set_rsavrfy(cc, &br_rsa_i31_pkcs1_vrfy);
-	br_ssl_engine_set_ec(&cc->eng, &br_ec_prime_i31);
-	br_ssl_client_set_ecdsa(cc, &br_ecdsa_i31_vrfy_asn1);
+	br_ssl_engine_set_ec(&cc->eng, &br_ec_all_m31);
+	br_ssl_engine_set_ecdsa(&cc->eng, &br_ecdsa_i31_vrfy_asn1);
+	*/
 
 	/*
 	 * Record handler:
@@ -184,6 +243,8 @@ example_client_profile(br_ssl_client_context *cc
 	 *    need the CBC record handler ("set_cbc").
 	 * -- Cipher suites in AES_128_GCM and AES_256_GCM need the GCM
 	 *    record handler ("set_gcm").
+	 * -- Cipher suites in CHACHA20_POLY1305 need the ChaCha20+Poly1305
+	 *    record handler ("set_chapol").
 	 */
 	br_ssl_engine_set_cbc(&cc->eng,
 		&br_sslrec_in_cbc_vtable,
@@ -191,6 +252,9 @@ example_client_profile(br_ssl_client_context *cc
 	br_ssl_engine_set_gcm(&cc->eng,
 		&br_sslrec_in_gcm_vtable,
 		&br_sslrec_out_gcm_vtable);
+	br_ssl_engine_set_chapol(&cc->eng,
+		&br_sslrec_in_chapol_vtable,
+		&br_sslrec_out_chapol_vtable);
 
 	/*
 	 * Symmetric encryption:
@@ -229,6 +293,14 @@ example_client_profile(br_ssl_client_context *cc
 	 *    aes_big     Classical table-based AES implementation. This
 	 *                is decently fast and still resonably compact,
 	 *                but it is not constant-time.
+	 *
+	 *    aes_x86ni   Very fast implementation that uses the AES-NI
+	 *                opcodes on recent x86 CPU. But it may not be
+	 *                compiled in the library if the compiler or
+	 *                architecture is not supported; and the CPU
+	 *                may also not support the opcodes. Selection
+	 *                functions are provided to test for availability
+	 *                of the code and the opcodes.
 	 *
 	 * Whether having constant-time implementations is absolutely
 	 * required for security depends on the context (in particular

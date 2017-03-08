@@ -29,6 +29,10 @@
 #include <errno.h>
 #include <signal.h>
 
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
@@ -37,14 +41,18 @@
 #include <unistd.h>
 #include <fcntl.h>
 
-#include "brssl.h"
-#include "bearssl.h"
+#define SOCKET             int
+#define INVALID_SOCKET     (-1)
+#define SOCKADDR_STORAGE   struct sockaddr_storage
+#endif
 
-static int
+#include "brssl.h"
+
+static SOCKET
 host_bind(const char *host, const char *port, int verbose)
 {
 	struct addrinfo hints, *si, *p;
-	int fd;
+	SOCKET fd;
 	int err;
 
 	memset(&hints, 0, sizeof hints);
@@ -54,9 +62,9 @@ host_bind(const char *host, const char *port, int verbose)
 	if (err != 0) {
 		fprintf(stderr, "ERROR: getaddrinfo(): %s\n",
 			gai_strerror(err));
-		return -1;
+		return INVALID_SOCKET;
 	}
-	fd = -1;
+	fd = INVALID_SOCKET;
 	for (p = si; p != NULL; p = p->ai_next) {
 		struct sockaddr *sa;
 		struct sockaddr_in sa4;
@@ -102,21 +110,27 @@ host_bind(const char *host, const char *port, int verbose)
 			fprintf(stderr, "binding to: %s\n", tmp);
 		}
 		fd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
-		if (fd < 0) {
+		if (fd == INVALID_SOCKET) {
 			if (verbose) {
 				perror("socket()");
 			}
 			continue;
 		}
 		opt = 1;
-		setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof opt);
+		setsockopt(fd, SOL_SOCKET, SO_REUSEADDR,
+			(void *)&opt, sizeof opt);
 		opt = 0;
-		setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &opt, sizeof opt);
+		setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY,
+			(void *)&opt, sizeof opt);
 		if (bind(fd, sa, sa_len) < 0) {
 			if (verbose) {
 				perror("bind()");
 			}
+#ifdef _WIN32
+			closesocket(fd);
+#else
 			close(fd);
+#endif
 			continue;
 		}
 		break;
@@ -124,15 +138,19 @@ host_bind(const char *host, const char *port, int verbose)
 	if (p == NULL) {
 		freeaddrinfo(si);
 		fprintf(stderr, "ERROR: failed to bind\n");
-		return -1;
+		return INVALID_SOCKET;
 	}
 	freeaddrinfo(si);
 	if (listen(fd, 5) < 0) {
 		if (verbose) {
 			perror("listen()");
 		}
+#ifdef _WIN32
+		closesocket(fd);
+#else
 		close(fd);
-		return -1;
+#endif
+		return INVALID_SOCKET;
 	}
 	if (verbose) {
 		fprintf(stderr, "bound.\n");
@@ -140,27 +158,27 @@ host_bind(const char *host, const char *port, int verbose)
 	return fd;
 }
 
-static int
-accept_client(int server_fd, int verbose)
+static SOCKET
+accept_client(SOCKET server_fd, int verbose)
 {
 	int fd;
-	struct sockaddr sa;
+	SOCKADDR_STORAGE sa;
 	socklen_t sa_len;
 
 	sa_len = sizeof sa;
-	fd = accept(server_fd, &sa, &sa_len);
-	if (fd < 0) {
+	fd = accept(server_fd, (struct sockaddr *)&sa, &sa_len);
+	if (fd == INVALID_SOCKET) {
 		if (verbose) {
 			perror("accept()");
 		}
-		return -1;
+		return INVALID_SOCKET;
 	}
 	if (verbose) {
 		char tmp[INET6_ADDRSTRLEN + 50];
 		const char *name;
 
 		name = NULL;
-		switch (sa.sa_family) {
+		switch (((struct sockaddr *)&sa)->sa_family) {
 		case AF_INET:
 			name = inet_ntop(AF_INET,
 				&((struct sockaddr_in *)&sa)->sin_addr,
@@ -173,8 +191,8 @@ accept_client(int server_fd, int verbose)
 			break;
 		}
 		if (name == NULL) {
-			sprintf(tmp, "<unknown: %lu>",
-				(unsigned long)sa.sa_family);
+			sprintf(tmp, "<unknown: %lu>", (unsigned long)
+				((struct sockaddr *)&sa)->sa_family);
 			name = tmp;
 		}
 		fprintf(stderr, "accepting connection from: %s\n", name);
@@ -182,9 +200,18 @@ accept_client(int server_fd, int verbose)
 
 	/*
 	 * We make the socket non-blocking, since we are going to use
-	 * poll() to organise I/O.
+	 * poll() or select() to organise I/O.
 	 */
+#ifdef _WIN32
+	{
+		u_long arg;
+
+		arg = 1;
+		ioctlsocket(fd, FIONBIO, &arg);
+	}
+#else
 	fcntl(fd, F_SETFL, O_NONBLOCK);
+#endif
 	return fd;
 }
 
@@ -228,6 +255,8 @@ usage_server(void)
 	fprintf(stderr,
 "   -hf names       add support for some hash functions (comma-separated)\n");
 	fprintf(stderr,
+"   -cbhash         test hashing in policy callback\n");
+	fprintf(stderr,
 "   -serverpref     enforce server's preferences for cipher suites\n");
 	fprintf(stderr,
 "   -noreneg        prohibit renegotiations\n");
@@ -245,6 +274,7 @@ typedef struct {
 	size_t chain_len;
 	int cert_signer_algo;
 	private_key *sk;
+	int cbhash;
 } policy_context;
 
 static void
@@ -270,10 +300,10 @@ print_hashes(unsigned chashes)
 	}
 }
 
-static int
+static unsigned
 choose_hash(unsigned chashes)
 {
-	int hash_id;
+	unsigned hash_id;
 
 	for (hash_id = 6; hash_id >= 2; hash_id --) {
 		if (((chashes >> hash_id) & 1) != 0) {
@@ -357,9 +387,21 @@ sp_choose(const br_ssl_server_policy_class **pctx,
 				if (br_ssl_engine_get_version(&cc->eng)
 					< BR_TLS12)
 				{
-					choices->hash_id = 0;
+					if (pc->cbhash) {
+						choices->algo_id = 0x0001;
+					} else {
+						choices->algo_id = 0xFF00;
+					}
 				} else {
-					choices->hash_id = choose_hash(chashes);
+					unsigned id;
+
+					id = choose_hash(chashes);
+					if (pc->cbhash) {
+						choices->algo_id =
+							(id << 8) + 0x01;
+					} else {
+						choices->algo_id = 0xFF00 + id;
+					}
 				}
 				goto choose_ok;
 			}
@@ -370,10 +412,23 @@ sp_choose(const br_ssl_server_policy_class **pctx,
 				if (br_ssl_engine_get_version(&cc->eng)
 					< BR_TLS12)
 				{
-					choices->hash_id = br_sha1_ID;
+					if (pc->cbhash) {
+						choices->algo_id = 0x0203;
+					} else {
+						choices->algo_id =
+							0xFF00 + br_sha1_ID;
+					}
 				} else {
-					choices->hash_id =
-						choose_hash(chashes >> 8);
+					unsigned id;
+
+					id = choose_hash(chashes >> 8);
+					if (pc->cbhash) {
+						choices->algo_id =
+							(id << 8) + 0x03;
+					} else {
+						choices->algo_id =
+							0xFF00 + id;
+					}
 				}
 				goto choose_ok;
 			}
@@ -412,19 +467,28 @@ choose_ok:
 
 static uint32_t
 sp_do_keyx(const br_ssl_server_policy_class **pctx,
-	unsigned char *data, size_t len)
+	unsigned char *data, size_t *len)
 {
 	policy_context *pc;
+	uint32_t r;
+	size_t xoff, xlen;
 
 	pc = (policy_context *)pctx;
 	switch (pc->sk->key_type) {
+		const br_ec_impl *iec;
+
 	case BR_KEYTYPE_RSA:
 		return br_rsa_ssl_decrypt(
-			&br_rsa_i31_private, &pc->sk->key.rsa,
-			data, len);
+			br_rsa_private_get_default(),
+			&pc->sk->key.rsa, data, *len);
 	case BR_KEYTYPE_EC:
-		return br_ec_prime_i31.mul(data, len, pc->sk->key.ec.x,
+		iec = br_ec_get_default();
+		r = iec->mul(data, *len, pc->sk->key.ec.x,
 			pc->sk->key.ec.xlen, pc->sk->key.ec.curve);
+		xoff = iec->xoff(pc->sk->key.ec.curve, &xlen);
+		memmove(data, data + xoff, xlen);
+		*len = xlen;
+		return r;
 	default:
 		fprintf(stderr, "ERROR: unknown private key type (%d)\n",
 			(int)pc->sk->key_type);
@@ -434,13 +498,40 @@ sp_do_keyx(const br_ssl_server_policy_class **pctx,
 
 static size_t
 sp_do_sign(const br_ssl_server_policy_class **pctx,
-	int hash_id, size_t hv_len, unsigned char *data, size_t len)
+	unsigned algo_id, unsigned char *data, size_t hv_len, size_t len)
 {
 	policy_context *pc;
 	unsigned char hv[64];
 
 	pc = (policy_context *)pctx;
-	memcpy(hv, data, hv_len);
+	if (algo_id >= 0xFF00) {
+		algo_id &= 0xFF;
+		memcpy(hv, data, hv_len);
+	} else {
+		const br_hash_class *hc;
+		br_hash_compat_context zc;
+
+		if (pc->verbose) {
+			fprintf(stderr, "Callback hashing, algo = 0x%04X,"
+				" data_len = %lu\n",
+				algo_id, (unsigned long)hv_len);
+		}
+		algo_id >>= 8;
+		hc = get_hash_impl(algo_id);
+		if (hc == NULL) {
+			if (pc->verbose) {
+				fprintf(stderr,
+					"ERROR: unsupported hash function %u\n",
+					algo_id);
+			}
+			return 0;
+		}
+		hc->init(&zc.vtable);
+		hc->update(&zc.vtable, data, hv_len);
+		hc->out(&zc.vtable, hv);
+		hv_len = (hc->desc >> BR_HASHDESC_OUT_OFF)
+			& BR_HASHDESC_OUT_MASK;
+	}
 	switch (pc->sk->key_type) {
 		size_t sig_len;
 		uint32_t x;
@@ -448,12 +539,12 @@ sp_do_sign(const br_ssl_server_policy_class **pctx,
 		const br_hash_class *hc;
 
 	case BR_KEYTYPE_RSA:
-		hash_oid = get_hash_oid(hash_id);
-		if (hash_oid == NULL && hash_id != 0) {
+		hash_oid = get_hash_oid(algo_id);
+		if (hash_oid == NULL && algo_id != 0) {
 			if (pc->verbose) {
 				fprintf(stderr, "ERROR: cannot RSA-sign with"
-					" unknown hash function: %d\n",
-					hash_id);
+					" unknown hash function: %u\n",
+					algo_id);
 			}
 			return 0;
 		}
@@ -468,8 +559,8 @@ sp_do_sign(const br_ssl_server_policy_class **pctx,
 			}
 			return 0;
 		}
-		x = br_rsa_i31_pkcs1_sign(hash_oid, hv, hv_len,
-			&pc->sk->key.rsa, data);
+		x = br_rsa_pkcs1_sign_get_default()(
+			hash_oid, hv, hv_len, &pc->sk->key.rsa, data);
 		if (!x) {
 			if (pc->verbose) {
 				fprintf(stderr, "ERROR: RSA-sign failure\n");
@@ -479,12 +570,12 @@ sp_do_sign(const br_ssl_server_policy_class **pctx,
 		return sig_len;
 
 	case BR_KEYTYPE_EC:
-		hc = get_hash_impl(hash_id);
+		hc = get_hash_impl(algo_id);
 		if (hc == NULL) {
 			if (pc->verbose) {
 				fprintf(stderr, "ERROR: cannot ECDSA-sign with"
-					" unknown hash function: %d\n",
-					hash_id);
+					" unknown hash function: %u\n",
+					algo_id);
 			}
 			return 0;
 		}
@@ -496,8 +587,8 @@ sp_do_sign(const br_ssl_server_policy_class **pctx,
 			}
 			return 0;
 		}
-		sig_len = br_ecdsa_i31_sign_asn1(&br_ec_prime_i31, 
-			hc, hv, &pc->sk->key.ec, data);
+		sig_len = br_ecdsa_sign_asn1_get_default()(
+			br_ec_get_default(), hc, hv, &pc->sk->key.ec, data);
 		if (sig_len == 0) {
 			if (pc->verbose) {
 				fprintf(stderr, "ERROR: ECDSA-sign failure\n");
@@ -539,12 +630,13 @@ do_server(int argc, char *argv[])
 	size_t num_suites;
 	uint16_t *suite_ids;
 	unsigned hfuns;
+	int cbhash;
 	br_x509_certificate *chain;
 	size_t chain_len;
 	int cert_signer_algo;
 	private_key *sk;
 	anchor_list anchors = VEC_INIT;
-	VECTOR(const char *) alpn_names = VEC_INIT;
+	VECTOR(char *) alpn_names = VEC_INIT;
 	br_x509_minimal_context xc;
 	const br_hash_class *dnhash;
 	size_t u;
@@ -554,7 +646,7 @@ do_server(int argc, char *argv[])
 	unsigned char *iobuf, *cache;
 	size_t iobuf_len, cache_len;
 	uint32_t flags;
-	int server_fd, fd;
+	SOCKET server_fd, fd;
 
 	retcode = 0;
 	verbose = 1;
@@ -567,6 +659,7 @@ do_server(int argc, char *argv[])
 	suites = NULL;
 	num_suites = 0;
 	hfuns = 0;
+	cbhash = 0;
 	suite_ids = NULL;
 	chain = NULL;
 	chain_len = 0;
@@ -576,8 +669,8 @@ do_server(int argc, char *argv[])
 	cache = NULL;
 	cache_len = (size_t)-1;
 	flags = 0;
-	server_fd = -1;
-	fd = -1;
+	server_fd = INVALID_SOCKET;
+	fd = INVALID_SOCKET;
 	for (i = 0; i < argc; i ++) {
 		const char *arg;
 
@@ -790,6 +883,8 @@ do_server(int argc, char *argv[])
 				goto server_exit_error;
 			}
 			hfuns |= x;
+		} else if (eqstr(arg, "-cbhash")) {
+			cbhash = 1;
 		} else if (eqstr(arg, "-serverpref")) {
 			flags |= BR_OPT_ENFORCE_SERVER_PREFERENCES;
 		} else if (eqstr(arg, "-noreneg")) {
@@ -864,7 +959,7 @@ do_server(int argc, char *argv[])
 		break;
 	case BR_KEYTYPE_EC:
 		curve = sk->key.ec.curve;
-		supp = br_ec_prime_i31.supported_curves;
+		supp = br_ec_get_default()->supported_curves;
 		if (curve > 31 || !((supp >> curve) & 1)) {
 			fprintf(stderr, "ERROR: private key curve (%d)"
 				" is not supported\n", curve);
@@ -954,41 +1049,19 @@ do_server(int argc, char *argv[])
 		}
 		/* TODO: algorithm implementation selection */
 		if ((req & REQ_AESCBC) != 0) {
-			br_ssl_engine_set_aes_cbc(&cc.eng,
-				&br_aes_ct_cbcenc_vtable,
-				&br_aes_ct_cbcdec_vtable);
-			br_ssl_engine_set_cbc(&cc.eng,
-				&br_sslrec_in_cbc_vtable,
-				&br_sslrec_out_cbc_vtable);
+			br_ssl_engine_set_default_aes_cbc(&cc.eng);
 		}
 		if ((req & REQ_AESGCM) != 0) {
-			br_ssl_engine_set_aes_ctr(&cc.eng,
-				&br_aes_ct_ctr_vtable);
-			br_ssl_engine_set_ghash(&cc.eng,
-				&br_ghash_ctmul);
-			br_ssl_engine_set_gcm(&cc.eng,
-				&br_sslrec_in_gcm_vtable,
-				&br_sslrec_out_gcm_vtable);
+			br_ssl_engine_set_default_aes_gcm(&cc.eng);
 		}
 		if ((req & REQ_CHAPOL) != 0) {
-			br_ssl_engine_set_chacha20(&cc.eng,
-				&br_chacha20_ct_run);
-			br_ssl_engine_set_poly1305(&cc.eng,
-				&br_poly1305_ctmul_run);
-			br_ssl_engine_set_chapol(&cc.eng,
-				&br_sslrec_in_chapol_vtable,
-				&br_sslrec_out_chapol_vtable);
+			br_ssl_engine_set_default_chapol(&cc.eng);
 		}
 		if ((req & REQ_3DESCBC) != 0) {
-			br_ssl_engine_set_des_cbc(&cc.eng,
-				&br_des_ct_cbcenc_vtable,
-				&br_des_ct_cbcdec_vtable);
-			br_ssl_engine_set_cbc(&cc.eng,
-				&br_sslrec_in_cbc_vtable,
-				&br_sslrec_out_cbc_vtable);
+			br_ssl_engine_set_default_des_cbc(&cc.eng);
 		}
 		if ((req & (REQ_ECDHE_RSA | REQ_ECDHE_ECDSA)) != 0) {
-			br_ssl_engine_set_ec(&cc.eng, &br_ec_prime_i31);
+			br_ssl_engine_set_default_ec(&cc.eng);
 		}
 	}
 	br_ssl_engine_set_suites(&cc.eng, suite_ids, num_suites);
@@ -1024,7 +1097,8 @@ do_server(int argc, char *argv[])
 
 	if (VEC_LEN(alpn_names) != 0) {
 		br_ssl_engine_set_protocol_names(&cc.eng,
-			&VEC_ELT(alpn_names, 0), VEC_LEN(alpn_names));
+			(const char **)&VEC_ELT(alpn_names, 0),
+			VEC_LEN(alpn_names));
 	}
 
 	/*
@@ -1038,6 +1112,7 @@ do_server(int argc, char *argv[])
 	pc.chain_len = chain_len;
 	pc.cert_signer_algo = cert_signer_algo;
 	pc.sk = sk;
+	pc.cbhash = cbhash;
 	br_ssl_server_set_policy(&cc, &pc.vtable);
 
 	/*
@@ -1059,12 +1134,11 @@ do_server(int argc, char *argv[])
 				br_x509_minimal_set_hash(&xc, id, hc);
 			}
 		}
-		br_ssl_engine_set_rsavrfy(&cc.eng, &br_rsa_i31_pkcs1_vrfy);
-		br_ssl_engine_set_ec(&cc.eng, &br_ec_prime_i31);
-		br_ssl_engine_set_ecdsa(&cc.eng, &br_ecdsa_i31_vrfy_asn1);
-		br_x509_minimal_set_rsa(&xc, &br_rsa_i31_pkcs1_vrfy);
+		br_ssl_engine_set_default_rsavrfy(&cc.eng);
+		br_ssl_engine_set_default_ecdsa(&cc.eng);
+		br_x509_minimal_set_rsa(&xc, br_rsa_pkcs1_vrfy_get_default());
 		br_x509_minimal_set_ecdsa(&xc,
-			&br_ec_prime_i31, &br_ecdsa_i31_vrfy_asn1);
+			br_ec_get_default(), br_ecdsa_vrfy_asn1_get_default());
 		br_ssl_engine_set_x509(&cc.eng, &xc.vtable);
 		br_ssl_server_set_trust_anchor_names_alt(&cc,
 			&VEC_ELT(anchors, 0), VEC_LEN(anchors));
@@ -1073,15 +1147,17 @@ do_server(int argc, char *argv[])
 	br_ssl_engine_set_buffer(&cc.eng, iobuf, iobuf_len, bidi);
 
 	/*
-	 * We need to ignore SIGPIPE.
+	 * On Unix systems, we need to ignore SIGPIPE.
 	 */
+#ifndef _WIN32
 	signal(SIGPIPE, SIG_IGN);
+#endif
 
 	/*
 	 * Open the server socket.
 	 */
 	server_fd = host_bind(bind_name, port, verbose);
-	if (server_fd < 0) {
+	if (server_fd == INVALID_SOCKET) {
 		goto server_exit_error;
 	}
 
@@ -1096,15 +1172,19 @@ do_server(int argc, char *argv[])
 		int x;
 
 		fd = accept_client(server_fd, verbose);
-		if (fd < 0) {
+		if (fd == INVALID_SOCKET) {
 			goto server_exit_error;
 		}
 		br_ssl_server_reset(&cc);
 		x = run_ssl_engine(&cc.eng, fd,
 			(verbose ? RUN_ENGINE_VERBOSE : 0)
 			| (trace ? RUN_ENGINE_TRACE : 0));
+#ifdef _WIN32
+		closesocket(fd);
+#else
 		close(fd);
-		fd = -1;
+#endif
+		fd = INVALID_SOCKET;
 		if (x < -1) {
 			goto server_exit_error;
 		}
@@ -1122,8 +1202,12 @@ server_exit:
 	VEC_CLEAREXT(alpn_names, &free_alpn);
 	xfree(iobuf);
 	xfree(cache);
-	if (fd >= 0) {
+	if (fd != INVALID_SOCKET) {
+#ifdef _WIN32
+		closesocket(fd);
+#else
 		close(fd);
+#endif
 	}
 	return retcode;
 

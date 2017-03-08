@@ -1322,6 +1322,18 @@ br_ssl_engine_set_aes_cbc(br_ssl_engine_context *cc,
 }
 
 /**
+ * \brief Set the "default" AES/CBC implementations.
+ *
+ * This function configures in the engine the AES implementations that
+ * should provide best runtime performance on the local system, while
+ * still being safe (in particular, constant-time). It also sets the
+ * handlers for CBC records.
+ *
+ * \param cc   SSL engine context.
+ */
+void br_ssl_engine_set_default_aes_cbc(br_ssl_engine_context *cc);
+
+/**
  * \brief Set the AES/CTR implementation.
  *
  * \param cc     SSL engine context.
@@ -1333,6 +1345,18 @@ br_ssl_engine_set_aes_ctr(br_ssl_engine_context *cc,
 {
 	cc->iaes_ctr = impl;
 }
+
+/**
+ * \brief Set the "default" implementations for AES/GCM (AES/CTR + GHASH).
+ *
+ * This function configures in the engine the AES/CTR and GHASH
+ * implementation that should provide best runtime performance on the local
+ * system, while still being safe (in particular, constant-time). It also
+ * sets the handlers for GCM records.
+ *
+ * \param cc   SSL engine context.
+ */
+void br_ssl_engine_set_default_aes_gcm(br_ssl_engine_context *cc);
 
 /**
  * \brief Set the DES/CBC implementations.
@@ -1349,6 +1373,18 @@ br_ssl_engine_set_des_cbc(br_ssl_engine_context *cc,
 	cc->ides_cbcenc = impl_enc;
 	cc->ides_cbcdec = impl_dec;
 }
+
+/**
+ * \brief Set the "default" DES/CBC implementations.
+ *
+ * This function configures in the engine the DES implementations that
+ * should provide best runtime performance on the local system, while
+ * still being safe (in particular, constant-time). It also sets the
+ * handlers for CBC records.
+ *
+ * \param cc   SSL engine context.
+ */
+void br_ssl_engine_set_default_des_cbc(br_ssl_engine_context *cc);
 
 /**
  * \brief Set the GHASH implementation (used in GCM mode).
@@ -1387,6 +1423,18 @@ br_ssl_engine_set_poly1305(br_ssl_engine_context *cc,
 {
 	cc->ipoly = ipoly;
 }
+
+/**
+ * \brief Set the "default" ChaCha20 and Poly1305 implementations.
+ *
+ * This function configures in the engine the ChaCha20 and Poly1305
+ * implementations that should provide best runtime performance on the
+ * local system, while still being safe (in particular, constant-time).
+ * It also sets the handlers for ChaCha20+Poly1305 records.
+ *
+ * \param cc   SSL engine context.
+ */
+void br_ssl_engine_set_default_chapol(br_ssl_engine_context *cc);
 
 /**
  * \brief Set the record encryption and decryption engines for CBC + HMAC.
@@ -1453,6 +1501,29 @@ br_ssl_engine_set_ec(br_ssl_engine_context *cc, const br_ec_impl *iec)
 }
 
 /**
+ * \brief Set the "default" EC implementation.
+ *
+ * This function sets the elliptic curve implementation for ECDH and
+ * ECDHE cipher suites, and for ECDSA support. It selects the fastest
+ * implementation on the current system.
+ *
+ * \param cc   SSL engine context.
+ */
+void br_ssl_engine_set_default_ec(br_ssl_engine_context *cc);
+
+/**
+ * \brief Get the EC implementation configured in the provided engine.
+ *
+ * \param cc   SSL engine context.
+ * \return  the EC implementation.
+ */
+static inline const br_ec_impl *
+br_ssl_engine_get_ec(br_ssl_engine_context *cc)
+{
+	return cc->iec;
+}
+
+/**
  * \brief Set the RSA signature verification implementation.
  *
  * On the client, this is used to verify the server's signature on its
@@ -1467,6 +1538,29 @@ static inline void
 br_ssl_engine_set_rsavrfy(br_ssl_engine_context *cc, br_rsa_pkcs1_vrfy irsavrfy)
 {
 	cc->irsavrfy = irsavrfy;
+}
+
+/**
+ * \brief Set the "default" RSA implementation (signature verification).
+ *
+ * This function sets the RSA implementation (signature verification)
+ * to the fastest implementation available on the current platform.
+ *
+ * \param cc   SSL engine context.
+ */
+void br_ssl_engine_set_default_rsavrfy(br_ssl_engine_context *cc);
+
+/**
+ * \brief Get the RSA implementation (signature verification) configured
+ * in the provided engine.
+ *
+ * \param cc   SSL engine context.
+ * \return  the RSA signature verification implementation.
+ */
+static inline br_rsa_pkcs1_vrfy
+br_ssl_engine_get_rsavrfy(br_ssl_engine_context *cc)
+{
+	return cc->irsavrfy;
 }
 
 /*
@@ -1488,6 +1582,31 @@ static inline void
 br_ssl_engine_set_ecdsa(br_ssl_engine_context *cc, br_ecdsa_vrfy iecdsa)
 {
 	cc->iecdsa = iecdsa;
+}
+
+/**
+ * \brief Set the "default" ECDSA implementation (signature verification).
+ *
+ * This function sets the ECDSA implementation (signature verification)
+ * to the fastest implementation available on the current platform. This
+ * call also sets the elliptic curve implementation itself, there again
+ * to the fastest EC implementation available.
+ *
+ * \param cc   SSL engine context.
+ */
+void br_ssl_engine_set_default_ecdsa(br_ssl_engine_context *cc);
+
+/**
+ * \brief Get the ECDSA implementation (signature verification) configured
+ * in the provided engine.
+ *
+ * \param cc   SSL engine context.
+ * \return  the ECDSA signature verification implementation.
+ */
+static inline br_ecdsa_vrfy
+br_ssl_engine_get_ecdsa(br_ssl_engine_context *cc)
+{
+	return cc->iecdsa;
 }
 
 /**
@@ -1655,6 +1774,25 @@ br_ssl_engine_set_session_parameters(br_ssl_engine_context *cc,
 	const br_ssl_session_parameters *pp)
 {
 	memcpy(&cc->session, pp, sizeof *pp);
+}
+
+/**
+ * \brief Get identifier for the curve used for key exchange.
+ *
+ * If the cipher suite uses ECDHE, then this function returns the
+ * identifier for the curve used for transient parameters. This is
+ * defined during the course of the handshake, when the ServerKeyExchange
+ * is sent (on the server) or received (on the client). If the
+ * cipher suite does not use ECDHE (e.g. static ECDH, or RSA key
+ * exchange), then this value is indeterminate.
+ *
+ * @param cc   SSL engine context.
+ * @return  the ECDHE curve identifier.
+ */
+static inline int
+br_ssl_engine_get_ecdhe_curve(br_ssl_engine_context *cc)
+{
+	return cc->ecdhe_curve;
 }
 
 /**
@@ -2136,12 +2274,13 @@ struct br_ssl_client_certificate_class_ {
 	 *     structure was set to -1).
 	 *
 	 * In that situation, this callback is invoked to compute the
-	 * client-side ECDH: the provided `data` (of length `len` bytes)
+	 * client-side ECDH: the provided `data` (of length `*len` bytes)
 	 * is the server's public key point (as decoded from its
 	 * certificate), and the client shall multiply that point with
 	 * its own private key, and write back the X coordinate of the
-	 * resulting point in the same buffer, starting at offset 1
-	 * (therefore, writing back the complete encoded point works).
+	 * resulting point in the same buffer, starting at offset 0.
+	 * The `*len` value shall be modified to designate the actual
+	 * length of the X coordinate.
 	 *
 	 * The callback must uphold the following:
 	 *
@@ -2158,11 +2297,11 @@ struct br_ssl_client_certificate_class_ {
 	 *
 	 * \param pctx   certificate handler context.
 	 * \param data   server public key point.
-	 * \param len    server public key point length (in bytes).
+	 * \param len    public key point length / X coordinate length.
 	 * \return  1 on success, 0 on error.
 	 */
 	uint32_t (*do_keyx)(const br_ssl_client_certificate_class **pctx,
-		unsigned char *data, size_t len);
+		unsigned char *data, size_t *len);
 
 	/**
 	 * \brief Perform a signature (client authentication).
@@ -2277,7 +2416,7 @@ struct br_ssl_client_context_ {
 	 * Bit field for algoithms (hash + signature) supported by the
 	 * server when requesting a client certificate.
 	 */
-	uint16_t hashes;
+	uint32_t hashes;
 
 	/*
 	 * Server's public key curve.
@@ -2321,15 +2460,33 @@ struct br_ssl_client_context_ {
  * \brief Get the hash functions and signature algorithms supported by
  * the server.
  *
- * This is a field of bits: for hash function of ID x, bit x is set if
- * the hash function is supported in RSA signatures, 8+x if it is supported
- * with ECDSA. This information is conveyed by the server when requesting
- * a client certificate.
+ * This value is a bit field:
+ *
+ *   - If RSA (PKCS#1 v1.5) is supported with hash function of ID `x`,
+ *     then bit `x` is set (hash function ID is 0 for the special MD5+SHA-1,
+ *     or 2 to 6 for the SHA family).
+ *
+ *   - If ECDSA is suported with hash function of ID `x`, then bit `8+x`
+ *     is set.
+ *
+ *   - Newer algorithms are symbolic 16-bit identifiers that do not
+ *     represent signature algorithm and hash function separately. If
+ *     the TLS-level identifier is `0x0800+x` for a `x` in the 0..15
+ *     range, then bit `16+x` is set.
+ *
+ * "New algorithms" are currently defined only in draft documents, so
+ * this support is subject to possible change. Right now (early 2017),
+ * this maps ed25519 (EdDSA on Curve25519) to bit 23, and ed448 (EdDSA
+ * on Curve448) to bit 24. If the identifiers on the wire change in
+ * future document, then the decoding mechanism in BearSSL will be
+ * amended to keep mapping ed25519 and ed448 on bits 23 and 24,
+ * respectively. Mapping of other new algorithms (e.g. RSA/PSS) is not
+ * guaranteed yet.
  *
  * \param cc   client context.
- * \return  the server-supported hash functions (for signatures).
+ * \return  the server-supported hash functions and signature algorithms.
  */
-static inline uint16_t
+static inline uint32_t
 br_ssl_client_get_server_hashes(const br_ssl_client_context *cc)
 {
 	return cc->hashes;
@@ -2418,6 +2575,17 @@ br_ssl_client_set_rsapub(br_ssl_client_context *cc, br_rsa_public irsapub)
 {
 	cc->irsapub = irsapub;
 }
+
+/**
+ * \brief Set the "default" RSA implementation for public-key operations.
+ *
+ * This sets the RSA implementation in the client context (for encrypting
+ * the pre-master secret, in `TLS_RSA_*` cipher suites) to the fastest
+ * available on the current platform.
+ *
+ * \param cc   client context.
+ */
+void br_ssl_client_set_default_rsapub(br_ssl_client_context *cc);
 
 /**
  * \brief Set the minimum ClientHello length (RFC 7685 padding).
@@ -2654,18 +2822,47 @@ typedef struct {
 	uint16_t cipher_suite;
 
 	/**
-	 * \brief Hash function for signing the ServerKeyExchange.
+	 * \brief Hash function or algorithm for signing the ServerKeyExchange.
 	 *
-	 * This is the symbolic identifier for the hash function that
-	 * will be used to sign the ServerKeyExchange message, for ECDHE
-	 * cipher suites. This is ignored for RSA and ECDH cipher suites.
+	 * This parameter is ignored for `TLS_RSA_*` and `TLS_ECDH_*`
+	 * cipher suites; it is used only for `TLS_ECDHE_*` suites, in
+	 * which the server _signs_ the ephemeral EC Diffie-Hellman
+	 * parameters sent to the client.
 	 *
-	 * Take care that with TLS 1.0 and 1.1, that value MUST match
-	 * the protocol requirements: value must be 0 (MD5+SHA-1) for
-	 * a RSA signature, or 2 (SHA-1) for an ECDSA signature. Only
-	 * TLS 1.2 allows for other hash functions.
+	 * This identifier must be one of the following values:
+	 *
+	 *   - `0xFF00 + id`, where `id` is a hash function identifier
+	 *     (0 for MD5+SHA-1, or 2 to 6 for one of the SHA functions);
+	 *
+	 *   - a full 16-bit identifier, lower than `0xFF00`.
+	 *
+	 * If the first option is used, then the SSL engine will
+	 * compute the hash of the data that is to be signed, with the
+	 * designated hash function. The `do_sign()` method will be
+	 * invoked with that hash value provided in the the `data`
+	 * buffer.
+	 *
+	 * If the second option is used, then the SSL engine will NOT
+	 * compute a hash on the data; instead, it will provide the
+	 * to-be-signed data itself in `data`, i.e. the concatenation of
+	 * the client random, server random, and encoded ECDH
+	 * parameters. Furthermore, with TLS-1.2 and later, the 16-bit
+	 * identifier will be used "as is" in the protocol, in the
+	 * SignatureAndHashAlgorithm; for instance, `0x0401` stands for
+	 * RSA PKCS#1 v1.5 signature (the `01`) with SHA-256 as hash
+	 * function (the `04`).
+	 *
+	 * Take care that with TLS 1.0 and 1.1, the hash function is
+	 * constrainted by the protocol: RSA signature must use
+	 * MD5+SHA-1 (so use `0xFF00`), while ECDSA must use SHA-1
+	 * (`0xFF02`). Since TLS 1.0 and 1.1 don't include a
+	 * SignatureAndHashAlgorithm field in their ServerKeyExchange
+	 * messages, any value below `0xFF00` will be usable to send the
+	 * raw ServerKeyExchange data to the `do_sign()` callback, but
+	 * that callback must still follow the protocol requirements
+	 * when generating the signature.
 	 */
-	int hash_id;
+	unsigned algo_id;
 
 	/**
 	 * \brief Certificate chain to send to the client.
@@ -2744,12 +2941,12 @@ struct br_ssl_server_policy_class_ {
 	 * operation for a key exchange that is not ECDHE. This callback
 	 * uses the private key.
 	 *
-	 * **For RSA key exchange**, the provided `data` (of length `len`
+	 * **For RSA key exchange**, the provided `data` (of length `*len`
 	 * bytes) shall be decrypted with the server's private key, and
 	 * the 48-byte premaster secret copied back to the first 48 bytes
 	 * of `data`.
 	 *
-	 *   - The caller makes sure that `len` is at least 59 bytes.
+	 *   - The caller makes sure that `*len` is at least 59 bytes.
 	 *
 	 *   - This callback MUST check that the provided length matches
 	 *     that of the key modulus; it shall report an error otherwise.
@@ -2766,12 +2963,11 @@ struct br_ssl_server_policy_class_ {
 	 *     in the first 48 bytes of `data` is unimportant (the caller
 	 *     will use random bytes instead).
 	 *
-	 * **For ECDH key exchange**, the provided `data` (of length `len`
+	 * **For ECDH key exchange**, the provided `data` (of length `*len`
 	 * bytes) is the elliptic curve point from the client. The
 	 * callback shall multiply it with its private key, and store
-	 * the resulting X coordinate in `data`, starting at offset 1
-	 * (thus, simply encoding the point in compressed or uncompressed
-	 * format in `data` is fine).
+	 * the resulting X coordinate in `data`, starting at offset 0,
+	 * and set `*len` to the length of the X coordinate.
 	 *
 	 *   - If the input array does not have the proper length for
 	 *     an encoded curve point, then an error (0) shall be reported.
@@ -2790,38 +2986,50 @@ struct br_ssl_server_policy_class_ {
 	 * \return  1 on success, 0 on error.
 	 */
 	uint32_t (*do_keyx)(const br_ssl_server_policy_class **pctx,
-		unsigned char *data, size_t len);
+		unsigned char *data, size_t *len);
 
 	/**
 	 * \brief Perform a signature (for a ServerKeyExchange message).
 	 *
-	 * This callback function is invoked for ECDHE cipher suites.
-	 * On input, the hash value to sign is in `data`, of size
-	 * `hv_len`; the involved hash function is identified by
-	 * `hash_id`. The signature shall be computed and written
-	 * back into `data`; the total size of that buffer is `len`
-	 * bytes.
+	 * This callback function is invoked for ECDHE cipher suites. On
+	 * input, the hash value or message to sign is in `data`, of
+	 * size `hv_len`; the involved hash function or algorithm is
+	 * identified by `algo_id`. The signature shall be computed and
+	 * written back into `data`; the total size of that buffer is
+	 * `len` bytes.
 	 *
 	 * This callback shall verify that the signature length does not
 	 * exceed `len` bytes, and abstain from writing the signature if
 	 * it does not fit.
 	 *
-	 * For RSA signatures, the `hash_id` may be 0, in which case
-	 * this is the special header-less signature specified in TLS 1.0
-	 * and 1.1, with a 36-byte hash value. Otherwise, normal PKCS#1
-	 * v1.5 signatures shall be computed.
+	 * The `algo_id` value matches that which was written in the
+	 * `choices` structures by the `choose()` callback. This will be
+	 * one of the following:
+	 *
+	 *   - `0xFF00 + id` for a hash function identifier `id`. In
+	 *     that case, the `data` buffer contains a hash value
+	 *     already computed over the data that is to be signed,
+	 *     of length `hv_len`. The `id` may be 0 to designate the
+	 *     special MD5+SHA-1 concatenation (old-style RSA signing).
+	 *
+	 *   - Another value, lower than `0xFF00`. The `data` buffer
+	 *     then contains the raw, non-hashed data to be signed
+	 *     (concatenation of the client and server randoms and
+	 *     ECDH parameters). The callback is responsible to apply
+	 *     any relevant hashing as part of the signing process.
 	 *
 	 * Returned value is the signature length (in bytes), or 0 on error.
 	 *
 	 * \param pctx      policy context.
-	 * \param hash_id   hash function identifier.
-	 * \param hv_len    hash value length (in bytes).
-	 * \param data      input/output buffer (hash value, then signature).
+	 * \param algo_id   hash function / algorithm identifier.
+	 * \param data      input/output buffer (message/hash, then signature).
+	 * \param hv_len    hash value or message length (in bytes).
 	 * \param len       total buffer length (in bytes).
 	 * \return  signature length (in bytes) on success, or 0 on error.
 	 */
 	size_t (*do_sign)(const br_ssl_server_policy_class **pctx,
-		int hash_id, size_t hv_len, unsigned char *data, size_t len);
+		unsigned algo_id,
+		unsigned char *data, size_t hv_len, size_t len);
 };
 
 /**
@@ -3006,9 +3214,10 @@ struct br_ssl_server_context_ {
 	/*
 	 * Hash functions supported by the client, with ECDSA and RSA
 	 * (bit mask). For hash function with id 'x', set bit index is
-	 * x for RSA, x+8 for ECDSA.
+	 * x for RSA, x+8 for ECDSA. For newer algorithms, with ID
+	 * 0x08**, bit 16+k is set for algorithm 0x0800+k.
 	 */
-	uint16_t hashes;
+	uint32_t hashes;
 
 	/*
 	 * Curves supported by the client (bit mask, for named curves).
@@ -3019,7 +3228,7 @@ struct br_ssl_server_context_ {
 	 * Context for chain handler.
 	 */
 	const br_ssl_server_policy_class **policy_vtable;
-	unsigned char sign_hash_id;
+	uint16_t sign_hash_id;
 
 	/*
 	 * For the core handlers, thus avoiding (in most cases) the
@@ -3086,8 +3295,9 @@ struct br_ssl_server_context_ {
  *      3 = TLS 1.2 with SHA-384
  * -- character 3: encryption
  *      a = AES/CBC
- *      g = AES/GCM
  *      d = 3DES/CBC
+ *      g = AES/GCM
+ *      c = ChaCha20+Poly1305
  */
 
 /**
@@ -3281,16 +3491,36 @@ br_ssl_server_get_client_suites(const br_ssl_server_context *cc, size_t *num)
 }
 
 /**
- * \brief Get the hash functions supported by the client.
+ * \brief Get the hash functions and signature algorithms supported by
+ * the client.
  *
- * This is a field of bits: for hash function of ID x, bit x is set if
- * the hash function is supported in RSA signatures, 8+x if it is supported
- * with ECDSA.
+ * This value is a bit field:
+ *
+ *   - If RSA (PKCS#1 v1.5) is supported with hash function of ID `x`,
+ *     then bit `x` is set (hash function ID is 0 for the special MD5+SHA-1,
+ *     or 2 to 6 for the SHA family).
+ *
+ *   - If ECDSA is suported with hash function of ID `x`, then bit `8+x`
+ *     is set.
+ *
+ *   - Newer algorithms are symbolic 16-bit identifiers that do not
+ *     represent signature algorithm and hash function separately. If
+ *     the TLS-level identifier is `0x0800+x` for a `x` in the 0..15
+ *     range, then bit `16+x` is set.
+ *
+ * "New algorithms" are currently defined only in draft documents, so
+ * this support is subject to possible change. Right now (early 2017),
+ * this maps ed25519 (EdDSA on Curve25519) to bit 23, and ed448 (EdDSA
+ * on Curve448) to bit 24. If the identifiers on the wire change in
+ * future document, then the decoding mechanism in BearSSL will be
+ * amended to keep mapping ed25519 and ed448 on bits 23 and 24,
+ * respectively. Mapping of other new algorithms (e.g. RSA/PSS) is not
+ * guaranteed yet.
  *
  * \param cc   server context.
- * \return  the client-supported hash functions (for signatures).
+ * \return  the client-supported hash functions and signature algorithms.
  */
-static inline uint16_t
+static inline uint32_t
 br_ssl_server_get_client_hashes(const br_ssl_server_context *cc)
 {
 	return cc->hashes;

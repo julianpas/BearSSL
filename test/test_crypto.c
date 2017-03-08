@@ -47,9 +47,9 @@ hextobin(unsigned char *dst, const char *src)
 		if (c >= '0' && c <= '9') {
 			c -= '0';
 		} else if (c >= 'A' && c <= 'F') {
-			c -= ('A' - 10); \
+			c -= ('A' - 10);
 		} else if (c >= 'a' && c <= 'f') {
-			c -= ('a' - 10); \
+			c -= ('a' - 10);
 		} else {
 			continue;
 		}
@@ -65,7 +65,7 @@ hextobin(unsigned char *dst, const char *src)
 }
 
 static void
-check_equals(char *banner, const void *v1, const void *v2, size_t len)
+check_equals(const char *banner, const void *v1, const void *v2, size_t len)
 {
 	size_t u;
 	const unsigned char *b;
@@ -591,7 +591,7 @@ test_HMAC_CT(const br_hash_class *digest_class,
 
 	br_hmac_key_init(&kc, digest_class, key, key_len);
 
-	for (u = 0; u < 130; u ++) {
+	for (u = 0; u < 2; u ++) {
 		for (v = 0; v < 130; v ++) {
 			size_t min_len, max_len;
 			size_t w;
@@ -3157,7 +3157,6 @@ test_AES_generic(char *name,
 			data_len = hextobin(plain, KAT_AES_CTR[u + 2]);
 			hextobin(cipher, KAT_AES_CTR[u + 3]);
 			vc->init(xc, key, key_len);
-
 			memcpy(buf, plain, data_len);
 			vc->run(xc, iv, 1, buf, data_len);
 			check_equals("KAT CTR AES (1)", buf, cipher, data_len);
@@ -3269,6 +3268,60 @@ test_AES_ct64(void)
 		&br_aes_ct64_cbcdec_vtable,
 		&br_aes_ct64_ctr_vtable,
 		1, 1);
+}
+
+static void
+test_AES_x86ni(void)
+{
+	const br_block_cbcenc_class *x_cbcenc;
+	const br_block_cbcdec_class *x_cbcdec;
+	const br_block_ctr_class *x_ctr;
+	int hcbcenc, hcbcdec, hctr;
+
+	x_cbcenc = br_aes_x86ni_cbcenc_get_vtable();
+	x_cbcdec = br_aes_x86ni_cbcdec_get_vtable();
+	x_ctr = br_aes_x86ni_ctr_get_vtable();
+	hcbcenc = (x_cbcenc != NULL);
+	hcbcdec = (x_cbcdec != NULL);
+	hctr = (x_ctr != NULL);
+	if (hcbcenc != hctr || hcbcdec != hctr) {
+		fprintf(stderr, "AES_x86ni availability mismatch (%d/%d/%d)\n",
+			hcbcenc, hcbcdec, hctr);
+		exit(EXIT_FAILURE);
+	}
+	if (hctr) {
+		test_AES_generic("AES_x86ni",
+			x_cbcenc, x_cbcdec, x_ctr, 1, 1);
+	} else {
+		printf("Test AES_x86ni: UNAVAILABLE\n");
+	}
+}
+
+static void
+test_AES_pwr8(void)
+{
+	const br_block_cbcenc_class *x_cbcenc;
+	const br_block_cbcdec_class *x_cbcdec;
+	const br_block_ctr_class *x_ctr;
+	int hcbcenc, hcbcdec, hctr;
+
+	x_cbcenc = br_aes_pwr8_cbcenc_get_vtable();
+	x_cbcdec = br_aes_pwr8_cbcdec_get_vtable();
+	x_ctr = br_aes_pwr8_ctr_get_vtable();
+	hcbcenc = (x_cbcenc != NULL);
+	hcbcdec = (x_cbcdec != NULL);
+	hctr = (x_ctr != NULL);
+	if (hcbcenc != hctr || hcbcdec != hctr) {
+		fprintf(stderr, "AES_pwr8 availability mismatch (%d/%d/%d)\n",
+			hcbcenc, hcbcdec, hctr);
+		exit(EXIT_FAILURE);
+	}
+	if (hctr) {
+		test_AES_generic("AES_pwr8",
+			x_cbcenc, x_cbcdec, x_ctr, 1, 1);
+	} else {
+		printf("Test AES_pwr8: UNAVAILABLE\n");
+	}
 }
 
 /*
@@ -4113,11 +4166,13 @@ static const struct {
 };
 
 static void
-test_Poly1305_ctmul(void)
+test_Poly1305_inner(const char *name, br_poly1305_run ipoly,
+	br_poly1305_run iref)
 {
 	size_t u;
+	br_hmac_drbg_context rng;
 
-	printf("Test Poly1305_ctmul: ");
+	printf("Test %s: ", name);
 	fflush(stdout);
 
 	for (u = 0; KAT_POLY1305[u].skey; u ++) {
@@ -4133,7 +4188,7 @@ test_Poly1305_ctmul(void)
 		hextobin(tag, KAT_POLY1305[u].stag);
 
 		memcpy(data, plain, len);
-		br_poly1305_ctmul_run(key, nonce, data, len,
+		ipoly(key, nonce, data, len,
 			aad, aad_len, tmp, br_chacha20_ct_run, 1);
 		if (memcmp(data, cipher, len) != 0) {
 			fprintf(stderr, "ChaCha20+Poly1305 KAT failed (1)\n");
@@ -4143,7 +4198,7 @@ test_Poly1305_ctmul(void)
 			fprintf(stderr, "ChaCha20+Poly1305 KAT failed (2)\n");
 			exit(EXIT_FAILURE);
 		}
-		br_poly1305_ctmul_run(key, nonce, data, len,
+		ipoly(key, nonce, data, len,
 			aad, aad_len, tmp, br_chacha20_ct_run, 0);
 		if (memcmp(data, plain, len) != 0) {
 			fprintf(stderr, "ChaCha20+Poly1305 KAT failed (3)\n");
@@ -4158,8 +4213,64 @@ test_Poly1305_ctmul(void)
 		fflush(stdout);
 	}
 
+	printf(" ");
+	fflush(stdout);
+
+	/*
+	 * We compare the "ipoly" and "iref" implementations together on
+	 * a bunch of pseudo-random messages.
+	 */
+	br_hmac_drbg_init(&rng, &br_sha256_vtable, "seed for Poly1305", 17);
+	for (u = 0; u < 100; u ++) {
+		unsigned char plain[100], aad[100], tmp[100];
+		unsigned char key[32], iv[12], tag1[16], tag2[16];
+
+		br_hmac_drbg_generate(&rng, key, sizeof key);
+		br_hmac_drbg_generate(&rng, iv, sizeof iv);
+		br_hmac_drbg_generate(&rng, plain, u);
+		br_hmac_drbg_generate(&rng, aad, u);
+		memcpy(tmp, plain, u);
+		memset(tmp + u, 0xFF, (sizeof tmp) - u);
+		ipoly(key, iv, tmp, u, aad, u, tag1,
+			&br_chacha20_ct_run, 1);
+		memset(tmp + u, 0x00, (sizeof tmp) - u);
+		iref(key, iv, tmp, u, aad, u, tag2,
+			&br_chacha20_ct_run, 0);
+		if (memcmp(tmp, plain, u) != 0) {
+			fprintf(stderr, "cross enc/dec failed\n");
+			exit(EXIT_FAILURE);
+		}
+		if (memcmp(tag1, tag2, sizeof tag1) != 0) {
+			fprintf(stderr, "cross MAC failed\n");
+			exit(EXIT_FAILURE);
+		}
+		printf(".");
+		fflush(stdout);
+	}
+
 	printf(" done.\n");
 	fflush(stdout);
+}
+
+static void
+test_Poly1305_ctmul(void)
+{
+	test_Poly1305_inner("Poly1305_ctmul", &br_poly1305_ctmul_run,
+		&br_poly1305_i15_run);
+}
+
+static void
+test_Poly1305_ctmul32(void)
+{
+	test_Poly1305_inner("Poly1305_ctmul32", &br_poly1305_ctmul32_run,
+		&br_poly1305_i15_run);
+}
+
+static void
+test_Poly1305_i15(void)
+{
+	test_Poly1305_inner("Poly1305_i15", &br_poly1305_i15_run,
+		&br_poly1305_ctmul_run);
 }
 
 /*
@@ -4272,7 +4383,7 @@ static const br_rsa_private_key RSA_SK = {
 };
 
 static void
-test_RSA_core(char *name, br_rsa_public fpub, br_rsa_private fpriv)
+test_RSA_core(const char *name, br_rsa_public fpub, br_rsa_private fpriv)
 {
 	unsigned char t1[128], t2[128], t3[128];
 
@@ -4300,24 +4411,95 @@ test_RSA_core(char *name, br_rsa_public fpub, br_rsa_private fpriv)
 	fflush(stdout);
 }
 
+static const unsigned char SHA1_OID[] = {
+	0x05, 0x2B, 0x0E, 0x03, 0x02, 0x1A
+};
+
+static void
+test_RSA_sign(const char *name, br_rsa_private fpriv,
+	br_rsa_pkcs1_sign fsign, br_rsa_pkcs1_vrfy fvrfy)
+{
+	unsigned char t1[128], t2[128];
+	unsigned char hv[20], tmp[20];
+	br_sha1_context hc;
+	size_t u;
+
+	printf("Test %s: ", name);
+	fflush(stdout);
+
+	/*
+	 * Verify the KAT test (computed with OpenSSL).
+	 */
+	hextobin(t1, "45A3DC6A106BCD3BD0E48FB579643AA3FF801E5903E80AA9B43A695A8E7F454E93FA208B69995FF7A6D5617C2FEB8E546375A664977A48931842AAE796B5A0D64393DCA35F3490FC157F5BD83B9D58C2F7926E6AE648A2BD96CAB8FCCD3D35BB11424AD47D973FF6D69CA774841AEC45DFAE99CCF79893E7047FDE6CB00AA76D");
+	br_sha1_init(&hc);
+	br_sha1_update(&hc, "test", 4);
+	br_sha1_out(&hc, hv);
+	if (!fvrfy(t1, sizeof t1, SHA1_OID, sizeof tmp, &RSA_PK, tmp)) {
+		fprintf(stderr, "Signature verification failed\n");
+		exit(EXIT_FAILURE);
+	}
+	check_equals("Extracted hash value", hv, tmp, sizeof tmp);
+
+	/*
+	 * Regenerate the signature. This should yield the same value as
+	 * the KAT test, since PKCS#1 v1.5 signatures are deterministic
+	 * (except the usual detail about hash function parameter
+	 * encoding, but OpenSSL uses the same convention as BearSSL).
+	 */
+	if (!fsign(SHA1_OID, hv, 20, &RSA_SK, t2)) {
+		fprintf(stderr, "Signature generation failed\n");
+		exit(EXIT_FAILURE);
+	}
+	check_equals("Regenerated signature", t1, t2, sizeof t1);
+
+	/*
+	 * Use the raw private core to generate fake signatures, where
+	 * one byte of the padded hash value is altered. They should all be
+	 * rejected.
+	 */
+	hextobin(t2, "0001FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF003021300906052B0E03021A05000414A94A8FE5CCB19BA61C4C0873D391E987982FBBD3");
+	for (u = 0; u < (sizeof t2) - 20; u ++) {
+		memcpy(t1, t2, sizeof t2);
+		t1[u] ^= 0x01;
+		if (!fpriv(t1, &RSA_SK)) {
+			fprintf(stderr, "RSA private key operation failed\n");
+			exit(EXIT_FAILURE);
+		}
+		if (fvrfy(t1, sizeof t1, SHA1_OID, sizeof tmp, &RSA_PK, tmp)) {
+			fprintf(stderr,
+				"Signature verification should have failed\n");
+			exit(EXIT_FAILURE);
+		}
+		printf(".");
+		fflush(stdout);
+	}
+
+	printf(" done.\n");
+	fflush(stdout);
+}
+
+static void
+test_RSA_i15(void)
+{
+	test_RSA_core("RSA i15 core", &br_rsa_i15_public, &br_rsa_i15_private);
+	test_RSA_sign("RSA i15 sign", &br_rsa_i15_private,
+		&br_rsa_i15_pkcs1_sign, &br_rsa_i15_pkcs1_vrfy);
+}
+
 static void
 test_RSA_i31(void)
 {
 	test_RSA_core("RSA i31 core", &br_rsa_i31_public, &br_rsa_i31_private);
-	/* FIXME
-	test_RSA_sign("RSA i31 sign",
-		&br_rsa_i31_pkcs1_vrfy, &br_rsa_i31_pkcs1_sign);
-	*/
+	test_RSA_sign("RSA i31 sign", &br_rsa_i31_private,
+		&br_rsa_i31_pkcs1_sign, &br_rsa_i31_pkcs1_vrfy);
 }
 
 static void
 test_RSA_i32(void)
 {
 	test_RSA_core("RSA i32 core", &br_rsa_i32_public, &br_rsa_i32_private);
-	/* FIXME
-	test_RSA_sign("RSA i32 sign",
-		&br_rsa_i32_pkcs1_vrfy, &br_rsa_i32_pkcs1_sign);
-	*/
+	test_RSA_sign("RSA i32 sign", &br_rsa_i32_private,
+		&br_rsa_i32_pkcs1_sign, &br_rsa_i32_pkcs1_vrfy);
 }
 
 #if 0
@@ -4489,7 +4671,7 @@ static const char *const KAT_GHASH[] = {
 };
 
 static void
-test_GHASH(char *name, br_ghash gh)
+test_GHASH(const char *name, br_ghash gh)
 {
 	size_t u;
 
@@ -4520,6 +4702,31 @@ test_GHASH(char *name, br_ghash gh)
 		check_equals("KAT GHASH", y, ref, sizeof ref);
 	}
 
+	for (u = 0; u <= 1024; u ++) {
+		unsigned char key[32], iv[12];
+		unsigned char buf[1024 + 32];
+		unsigned char y0[16], y1[16];
+		char tmp[100];
+
+		memset(key, 0, sizeof key);
+		memset(iv, 0, sizeof iv);
+		br_enc32be(key, u);
+		memset(buf, 0, sizeof buf);
+		br_chacha20_ct_run(key, iv, 1, buf, sizeof buf);
+
+		memcpy(y0, buf, 16);
+		br_ghash_ctmul32(y0, buf + 16, buf + 32, u);
+		memcpy(y1, buf, 16);
+		gh(y1, buf + 16, buf + 32, u);
+		sprintf(tmp, "XREF %s (len = %u)", name, (unsigned)u);
+		check_equals(tmp, y0, y1, 16);
+
+		if ((u & 31) == 0) {
+			printf(".");
+			fflush(stdout);
+		}
+	}
+
 	printf("done.\n");
 	fflush(stdout);
 }
@@ -4540,6 +4747,32 @@ static void
 test_GHASH_ctmul64(void)
 {
 	test_GHASH("GHASH_ctmul64", br_ghash_ctmul64);
+}
+
+static void
+test_GHASH_pclmul(void)
+{
+	br_ghash gh;
+
+	gh = br_ghash_pclmul_get();
+	if (gh == 0) {
+		printf("Test GHASH_pclmul: UNAVAILABLE\n");
+	} else {
+		test_GHASH("GHASH_pclmul", gh);
+	}
+}
+
+static void
+test_GHASH_pwr8(void)
+{
+	br_ghash gh;
+
+	gh = br_ghash_pwr8_get();
+	if (gh == 0) {
+		printf("Test GHASH_pwr8: UNAVAILABLE\n");
+	} else {
+		test_GHASH("GHASH_pwr8", gh);
+	}
 }
 
 static void
@@ -4662,6 +4895,20 @@ test_EC_inner(const char *sk, const char *sU,
 		}
 
 		/*
+		 * Also recomputed D = z*G with mulgen(). This must
+		 * again match.
+		 */
+		memset(eD, 0, ulen);
+		if (impl->mulgen(eD, bz, nlen, cd->curve) != ulen) {
+			fprintf(stderr, "mulgen() failed: wrong length\n");
+			exit(EXIT_FAILURE);
+		}
+		if (memcmp(eC, eD, nlen) != 0) {
+			fprintf(stderr, "mulgen() / muladd() mismatch\n");
+			exit(EXIT_FAILURE);
+		}
+
+		/*
 		 * Check with x*A = y*B. We do so by setting b = x and y = a.
 		 */
 		memcpy(b, x, sizeof x);
@@ -4751,12 +4998,139 @@ test_EC_KAT(const char *name, const br_ec_impl *impl, uint32_t curve_mask)
 }
 
 static void
+test_EC_prime_i15(void)
+{
+	test_EC_KAT("EC_prime_i15", &br_ec_prime_i15,
+		(uint32_t)1 << BR_EC_secp256r1
+		| (uint32_t)1 << BR_EC_secp384r1
+		| (uint32_t)1 << BR_EC_secp521r1);
+}
+
+static void
 test_EC_prime_i31(void)
 {
 	test_EC_KAT("EC_prime_i31", &br_ec_prime_i31,
 		(uint32_t)1 << BR_EC_secp256r1
 		| (uint32_t)1 << BR_EC_secp384r1
 		| (uint32_t)1 << BR_EC_secp521r1);
+}
+
+static void
+test_EC_p256_m15(void)
+{
+	test_EC_KAT("EC_p256_m15", &br_ec_p256_m15,
+		(uint32_t)1 << BR_EC_secp256r1);
+}
+
+static void
+test_EC_p256_m31(void)
+{
+	test_EC_KAT("EC_p256_m31", &br_ec_p256_m31,
+		(uint32_t)1 << BR_EC_secp256r1);
+}
+
+const struct {
+	const char *scalar;
+	const char *u_in;
+	const char *u_out;
+} C25519_KAT[] = {
+	{ "A546E36BF0527C9D3B16154B82465EDD62144C0AC1FC5A18506A2244BA449AC4",
+	  "E6DB6867583030DB3594C1A424B15F7C726624EC26B3353B10A903A6D0AB1C4C",
+	  "C3DA55379DE9C6908E94EA4DF28D084F32ECCF03491C71F754B4075577A28552" },
+	{ "4B66E9D4D1B4673C5AD22691957D6AF5C11B6421E0EA01D42CA4169E7918BA0D",
+	  "E5210F12786811D3F4B7959D0538AE2C31DBE7106FC03C3EFC4CD549C715A493",
+	  "95CBDE9476E8907D7AADE45CB4B873F88B595A68799FA152E6F8F7647AAC7957" },
+	{ 0, 0, 0 }
+};
+
+static void
+test_EC_c25519(const char *name, const br_ec_impl *iec)
+{
+	unsigned char bu[32], bk[32], br[32];
+	size_t v;
+	int i;
+
+	printf("Test %s: ", name);
+	fflush(stdout);
+	for (v = 0; C25519_KAT[v].scalar; v ++) {
+		hextobin(bk, C25519_KAT[v].scalar);
+		hextobin(bu, C25519_KAT[v].u_in);
+		hextobin(br, C25519_KAT[v].u_out);
+		if (!iec->mul(bu, sizeof bu, bk, sizeof bk, BR_EC_curve25519)) {
+			fprintf(stderr, "Curve25519 multiplication failed\n");
+			exit(EXIT_FAILURE);
+		}
+		if (memcmp(bu, br, sizeof bu) != 0) {
+			fprintf(stderr, "Curve25519 failed KAT\n");
+			exit(EXIT_FAILURE);
+		}
+		printf(".");
+		fflush(stdout);
+	}
+	printf(" ");
+	fflush(stdout);
+
+	memset(bu, 0, sizeof bu);
+	bu[0] = 0x09;
+	memcpy(bk, bu, sizeof bu);
+	for (i = 1; i <= 1000; i ++) {
+		if (!iec->mul(bu, sizeof bu, bk, sizeof bk, BR_EC_curve25519)) {
+			fprintf(stderr, "Curve25519 multiplication failed"
+				" (iter=%d)\n", i);
+			exit(EXIT_FAILURE);
+		}
+		for (v = 0; v < sizeof bu; v ++) {
+			unsigned t;
+
+			t = bu[v];
+			bu[v] = bk[v];
+			bk[v] = t;
+		}
+		if (i == 1 || i == 1000) {
+			const char *sref;
+
+			sref = (i == 1)
+				? "422C8E7A6227D7BCA1350B3E2BB7279F7897B87BB6854B783C60E80311AE3079"
+				: "684CF59BA83309552800EF566F2F4D3C1C3887C49360E3875F2EB94D99532C51";
+			hextobin(br, sref);
+			if (memcmp(bk, br, sizeof bk) != 0) {
+				fprintf(stderr,
+					"Curve25519 failed KAT (iter=%d)\n", i);
+				exit(EXIT_FAILURE);
+			}
+		}
+		if (i % 100 == 0) {
+			printf(".");
+			fflush(stdout);
+		}
+	}
+
+	printf(" done.\n");
+	fflush(stdout);
+}
+
+static void
+test_EC_c25519_i15(void)
+{
+	test_EC_c25519("EC_c25519_i15", &br_ec_c25519_i15);
+}
+
+static void
+test_EC_c25519_i31(void)
+{
+	test_EC_c25519("EC_c25519_i31", &br_ec_c25519_i31);
+}
+
+static void
+test_EC_c25519_m15(void)
+{
+	test_EC_c25519("EC_c25519_m15", &br_ec_c25519_m15);
+}
+
+static void
+test_EC_c25519_m31(void)
+{
+	test_EC_c25519("EC_c25519_m31", &br_ec_c25519_m31);
 }
 
 static const unsigned char EC_P256_PUB_POINT[] = {
@@ -5131,7 +5505,8 @@ const ecdsa_kat_vector ECDSA_KAT[] = {
 };
 
 static void
-test_ECDSA_KAT(br_ecdsa_sign sign, br_ecdsa_vrfy vrfy, int asn1)
+test_ECDSA_KAT(const br_ec_impl *iec,
+	br_ecdsa_sign sign, br_ecdsa_vrfy vrfy, int asn1)
 {
 	size_t u;
 
@@ -5158,28 +5533,28 @@ test_ECDSA_KAT(br_ecdsa_sign sign, br_ecdsa_vrfy vrfy, int asn1)
 			sig_len = hextobin(sig, kv->sraw);
 		}
 
-		if (vrfy(&br_ec_prime_i31, hash, hash_len,
+		if (vrfy(iec, hash, hash_len,
 			kv->pub, sig, sig_len) != 1)
 		{
 			fprintf(stderr, "ECDSA KAT verify failed (1)\n");
 			exit(EXIT_FAILURE);
 		}
 		hash[0] ^= 0x80;
-		if (vrfy(&br_ec_prime_i31, hash, hash_len,
+		if (vrfy(iec, hash, hash_len,
 			kv->pub, sig, sig_len) != 0)
 		{
 			fprintf(stderr, "ECDSA KAT verify shoud have failed\n");
 			exit(EXIT_FAILURE);
 		}
 		hash[0] ^= 0x80;
-		if (vrfy(&br_ec_prime_i31, hash, hash_len,
+		if (vrfy(iec, hash, hash_len,
 			kv->pub, sig, sig_len) != 1)
 		{
 			fprintf(stderr, "ECDSA KAT verify failed (2)\n");
 			exit(EXIT_FAILURE);
 		}
 
-		sig2_len = sign(&br_ec_prime_i31, kv->hf, hash, kv->priv, sig2);
+		sig2_len = sign(iec, kv->hf, hash, kv->priv, sig2);
 		if (sig2_len == 0) {
 			fprintf(stderr, "ECDSA KAT sign failed\n");
 			exit(EXIT_FAILURE);
@@ -5201,10 +5576,29 @@ test_ECDSA_i31(void)
 	fflush(stdout);
 	printf("[raw]");
 	fflush(stdout);
-	test_ECDSA_KAT(&br_ecdsa_i31_sign_raw, &br_ecdsa_i31_vrfy_raw, 0);
+	test_ECDSA_KAT(&br_ec_prime_i31,
+		&br_ecdsa_i31_sign_raw, &br_ecdsa_i31_vrfy_raw, 0);
 	printf(" [asn1]");
 	fflush(stdout);
-	test_ECDSA_KAT(&br_ecdsa_i31_sign_asn1, &br_ecdsa_i31_vrfy_asn1, 1);
+	test_ECDSA_KAT(&br_ec_prime_i31,
+		&br_ecdsa_i31_sign_asn1, &br_ecdsa_i31_vrfy_asn1, 1);
+	printf(" done.\n");
+	fflush(stdout);
+}
+
+static void
+test_ECDSA_i15(void)
+{
+	printf("Test ECDSA/i15: ");
+	fflush(stdout);
+	printf("[raw]");
+	fflush(stdout);
+	test_ECDSA_KAT(&br_ec_prime_i15,
+		&br_ecdsa_i15_sign_raw, &br_ecdsa_i15_vrfy_raw, 0);
+	printf(" [asn1]");
+	fflush(stdout);
+	test_ECDSA_KAT(&br_ec_prime_i31,
+		&br_ecdsa_i15_sign_asn1, &br_ecdsa_i15_vrfy_asn1, 1);
 	printf(" done.\n");
 	fflush(stdout);
 }
@@ -5252,7 +5646,7 @@ eq_name(const char *s1, const char *s2)
 
 static const struct {
 	void (*fn)(void);
-	char *name;
+	const char *name;
 } tfns[] = {
 	STU(MD5),
 	STU(SHA1),
@@ -5269,17 +5663,31 @@ static const struct {
 	STU(AES_small),
 	STU(AES_ct),
 	STU(AES_ct64),
+	STU(AES_pwr8),
+	STU(AES_x86ni),
 	STU(DES_tab),
 	STU(DES_ct),
 	STU(ChaCha20_ct),
 	STU(Poly1305_ctmul),
+	STU(Poly1305_ctmul32),
+	STU(Poly1305_i15),
+	STU(RSA_i15),
 	STU(RSA_i31),
 	STU(RSA_i32),
 	STU(GHASH_ctmul),
 	STU(GHASH_ctmul32),
 	STU(GHASH_ctmul64),
+	STU(GHASH_pclmul),
+	STU(GHASH_pwr8),
+	STU(EC_prime_i15),
 	STU(EC_prime_i31),
-	/* STU(EC_prime_i32), */
+	STU(EC_p256_m15),
+	STU(EC_p256_m31),
+	STU(EC_c25519_i15),
+	STU(EC_c25519_i31),
+	STU(EC_c25519_m15),
+	STU(EC_c25519_m31),
+	STU(ECDSA_i15),
 	STU(ECDSA_i31),
 	{ 0, 0 }
 };

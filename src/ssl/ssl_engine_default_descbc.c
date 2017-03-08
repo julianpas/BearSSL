@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016 Thomas Pornin <pornin@bolet.org>
+ * Copyright (c) 2017 Thomas Pornin <pornin@bolet.org>
  *
  * Permission is hereby granted, free of charge, to any person obtaining 
  * a copy of this software and associated documentation files (the
@@ -24,27 +24,14 @@
 
 #include "inner.h"
 
-static const uint32_t P521_P[] = {
-	0x00000219,
-	0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF,
-	0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF,
-	0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF,
-	0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF,
-	0x01FFFFFF
-};
-
-static const uint32_t P521_B[] = {
-	0x00000219,
-	0x540FC00A, 0x228FEA35, 0x2C34F1EF, 0x67BF107A,
-	0x46FC1CD5, 0x1605E9DD, 0x6937B165, 0x272A3D8F,
-	0x42785586, 0x44C8C778, 0x15F3B8B4, 0x64B73366,
-	0x03BA8B69, 0x0D05B42A, 0x21F929A2, 0x2C31C393,
-	0x00654FAE
-};
-
-/* see inner.h */
-const br_ec_prime_i31_curve br_ec_prime_i31_secp521r1 = {
-	P521_P,
-	P521_B,
-	0x00000001
-};
+/* see bearssl_ssl.h */
+void
+br_ssl_engine_set_default_des_cbc(br_ssl_engine_context *cc)
+{
+	br_ssl_engine_set_cbc(cc,
+		&br_sslrec_in_cbc_vtable,
+		&br_sslrec_out_cbc_vtable);
+	br_ssl_engine_set_des_cbc(cc,
+		&br_des_ct_cbcenc_vtable,
+		&br_des_ct_cbcdec_vtable);
+}

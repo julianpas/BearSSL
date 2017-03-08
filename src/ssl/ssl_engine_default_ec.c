@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016 Thomas Pornin <pornin@bolet.org>
+ * Copyright (c) 2017 Thomas Pornin <pornin@bolet.org>
  *
  * Permission is hereby granted, free of charge, to any person obtaining 
  * a copy of this software and associated documentation files (the
@@ -24,23 +24,13 @@
 
 #include "inner.h"
 
-static const uint32_t P256_P[] = {
-	0x00000108,
-	0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF, 0x00000007,
-	0x00000000, 0x00000000, 0x00000040, 0x7FFFFF80,
-	0x000000FF
-};
-
-static const uint32_t P256_B[] = {
-	0x00000108,
-	0x6FEE1803, 0x6229C4BD, 0x21B139BE, 0x327150AA,
-	0x3567802E, 0x3F7212ED, 0x012E4355, 0x782DD38D,
-	0x0000000E
-};
-
-/* see inner.h */
-const br_ec_prime_i31_curve br_ec_prime_i31_secp256r1 = {
-	P256_P,
-	P256_B,
-	0x00000001
-};
+/* see bearssl_ssl.h */
+void
+br_ssl_engine_set_default_ec(br_ssl_engine_context *cc)
+{
+#if BR_LOMUL
+	br_ssl_engine_set_ec(cc, &br_ec_all_m15);
+#else
+	br_ssl_engine_set_ec(cc, &br_ec_all_m31);
+#endif
+}

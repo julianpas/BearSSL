@@ -121,7 +121,7 @@
  *
  * ## Implementations
  *
- * Two RSA implementations are included:
+ * Three RSA implementations are included:
  *
  *   - The **i32** implementation internally represents big integers
  *     as arrays of 32-bit integers. It is perfunctory and portable,
@@ -132,6 +132,12 @@
  *     faster than the i32 implementation (the reduced integer size makes
  *     carry propagation easier) for a similar code footprint, but uses
  *     very slightly larger stack buffers (about 4% bigger).
+ *
+ *   - The **i15** implementation uses 16-bit integers, each containing
+ *     15 bits worth of integer data. Multiplication results fit on
+ *     32 bits, so this won't use the "widening" multiplication routine
+ *     on ARM Cortex M0/M0+, for much better performance and constant-time
+ *     execution.
  */
 
 /**
@@ -310,7 +316,7 @@ typedef uint32_t (*br_rsa_private)(unsigned char *x,
  * \param hash       hash value.
  * \param hash_len   hash value length (in bytes).
  * \param sk         RSA private key.
- * \param x          output buffer for the hash value.
+ * \param x          output buffer for the signature value.
  * \return  1 on success, 0 on error.
  */
 typedef uint32_t (*br_rsa_pkcs1_sign)(const unsigned char *hash_oid,
@@ -444,6 +450,110 @@ uint32_t br_rsa_i31_private(unsigned char *x,
 uint32_t br_rsa_i31_pkcs1_sign(const unsigned char *hash_oid,
 	const unsigned char *hash, size_t hash_len,
 	const br_rsa_private_key *sk, unsigned char *x);
+
+/*
+ * RSA "i15" engine. Integers are represented as 15-bit integers, so
+ * the code uses only 32-bit multiplication (no 64-bit result), which
+ * is vastly faster (and constant-time) on the ARM Cortex M0/M0+.
+ */
+
+/**
+ * \brief RSA public key engine "i15".
+ *
+ * \see br_rsa_public
+ *
+ * \param x      operand to exponentiate.
+ * \param xlen   length of the operand (in bytes).
+ * \param pk     RSA public key.
+ * \return  1 on success, 0 on error.
+ */
+uint32_t br_rsa_i15_public(unsigned char *x, size_t xlen,
+	const br_rsa_public_key *pk);
+
+/**
+ * \brief RSA signature verification engine "i15".
+ *
+ * \see br_rsa_pkcs1_vrfy
+ *
+ * \param x          signature buffer.
+ * \param xlen       signature length (in bytes).
+ * \param hash_oid   encoded hash algorithm OID (or `NULL`).
+ * \param hash_len   expected hash value length (in bytes).
+ * \param pk         RSA public key.
+ * \param hash_out   output buffer for the hash value.
+ * \return  1 on success, 0 on error.
+ */
+uint32_t br_rsa_i15_pkcs1_vrfy(const unsigned char *x, size_t xlen,
+	const unsigned char *hash_oid, size_t hash_len,
+	const br_rsa_public_key *pk, unsigned char *hash_out);
+
+/**
+ * \brief RSA private key engine "i15".
+ *
+ * \see br_rsa_private
+ *
+ * \param x    operand to exponentiate.
+ * \param sk   RSA private key.
+ * \return  1 on success, 0 on error.
+ */
+uint32_t br_rsa_i15_private(unsigned char *x,
+	const br_rsa_private_key *sk);
+
+/**
+ * \brief RSA signature generation engine "i15".
+ *
+ * \see br_rsa_pkcs1_sign
+ *
+ * \param hash_oid   encoded hash algorithm OID (or `NULL`).
+ * \param hash       hash value.
+ * \param hash_len   hash value length (in bytes).
+ * \param sk         RSA private key.
+ * \param x          output buffer for the hash value.
+ * \return  1 on success, 0 on error.
+ */
+uint32_t br_rsa_i15_pkcs1_sign(const unsigned char *hash_oid,
+	const unsigned char *hash, size_t hash_len,
+	const br_rsa_private_key *sk, unsigned char *x);
+
+/**
+ * \brief Get "default" RSA implementation (public-key operations).
+ *
+ * This returns the preferred implementation of RSA (public-key operations)
+ * on the current system.
+ *
+ * \return  the default implementation.
+ */
+br_rsa_public br_rsa_public_get_default(void);
+
+/**
+ * \brief Get "default" RSA implementation (private-key operations).
+ *
+ * This returns the preferred implementation of RSA (private-key operations)
+ * on the current system.
+ *
+ * \return  the default implementation.
+ */
+br_rsa_private br_rsa_private_get_default(void);
+
+/**
+ * \brief Get "default" RSA implementation (PKCS#1 signature verification).
+ *
+ * This returns the preferred implementation of RSA (signature verification)
+ * on the current system.
+ *
+ * \return  the default implementation.
+ */
+br_rsa_pkcs1_vrfy br_rsa_pkcs1_vrfy_get_default(void);
+
+/**
+ * \brief Get "default" RSA implementation (PKCS#1 signature generation).
+ *
+ * This returns the preferred implementation of RSA (signature generation)
+ * on the current system.
+ *
+ * \return  the default implementation.
+ */
+br_rsa_pkcs1_sign br_rsa_pkcs1_sign_get_default(void);
 
 /**
  * \brief RSA decryption helper, for SSL/TLS.

@@ -88,7 +88,12 @@ test_speed_ ## fname(void) \
 	memset(key, 'T', sizeof key); \
 	memset(buf, 'P', sizeof buf); \
 	memset(iv, 'X', sizeof iv); \
-	vt = &br_ ## cname ## _cbc ## dir ## _vtable; \
+	vt = br_ ## cname ## _cbc ## dir ## _get_vtable(); \
+	if (vt == NULL) { \
+		printf("%-30s UNAVAILABLE\n", #Name); \
+		fflush(stdout); \
+		return; \
+	} \
 	for (i = 0; i < 10; i ++) { \
 		vt->init(&ec.vtable, key, sizeof key); \
 		vt->run(&ec.vtable, iv, buf, sizeof buf); \
@@ -132,7 +137,12 @@ test_speed_ ## fname(void) \
 	memset(key, 'T', sizeof key); \
 	memset(buf, 'P', sizeof buf); \
 	memset(iv, 'X', sizeof iv); \
-	vt = &br_ ## cname ## _ctr_vtable; \
+	vt = br_ ## cname ## _ctr_get_vtable(); \
+	if (vt == NULL) { \
+		printf("%-30s UNAVAILABLE\n", #Name); \
+		fflush(stdout); \
+		return; \
+	} \
 	for (i = 0; i < 10; i ++) { \
 		vt->init(&ec.vtable, key, sizeof key); \
 		vt->run(&ec.vtable, iv, 1, buf, sizeof buf); \
@@ -206,6 +216,23 @@ SPEED_HASH(SHA-1, sha1)
 SPEED_HASH(SHA-256, sha256)
 SPEED_HASH(SHA-512, sha512)
 
+/*
+ * There are no vtable selection functions for the portable implementations,
+ * so we define some custom macros.
+ */
+#define br_aes_big_cbcenc_get_vtable()     (&br_aes_big_cbcenc_vtable)
+#define br_aes_big_cbcdec_get_vtable()     (&br_aes_big_cbcdec_vtable)
+#define br_aes_big_ctr_get_vtable()        (&br_aes_big_ctr_vtable)
+#define br_aes_small_cbcenc_get_vtable()   (&br_aes_small_cbcenc_vtable)
+#define br_aes_small_cbcdec_get_vtable()   (&br_aes_small_cbcdec_vtable)
+#define br_aes_small_ctr_get_vtable()      (&br_aes_small_ctr_vtable)
+#define br_aes_ct_cbcenc_get_vtable()      (&br_aes_ct_cbcenc_vtable)
+#define br_aes_ct_cbcdec_get_vtable()      (&br_aes_ct_cbcdec_vtable)
+#define br_aes_ct_ctr_get_vtable()         (&br_aes_ct_ctr_vtable)
+#define br_aes_ct64_cbcenc_get_vtable()    (&br_aes_ct64_cbcenc_vtable)
+#define br_aes_ct64_cbcdec_get_vtable()    (&br_aes_ct64_cbcdec_vtable)
+#define br_aes_ct64_ctr_get_vtable()       (&br_aes_ct64_ctr_vtable)
+
 #define SPEED_AES(iname) \
 SPEED_BLOCKCIPHER_CBC(AES-128 CBC encrypt (iname), aes128_ ## iname ## _cbcenc, aes_ ## iname, 16, enc) \
 SPEED_BLOCKCIPHER_CBC(AES-128 CBC decrypt (iname), aes128_ ## iname ## _cbcdec, aes_ ## iname, 16, dec) \
@@ -221,6 +248,13 @@ SPEED_AES(big)
 SPEED_AES(small)
 SPEED_AES(ct)
 SPEED_AES(ct64)
+SPEED_AES(x86ni)
+SPEED_AES(pwr8)
+
+#define br_des_tab_cbcenc_get_vtable()     (&br_des_tab_cbcenc_vtable)
+#define br_des_tab_cbcdec_get_vtable()     (&br_des_tab_cbcdec_vtable)
+#define br_des_ct_cbcenc_get_vtable()      (&br_des_ct_cbcenc_vtable)
+#define br_des_ct_cbcdec_get_vtable()      (&br_des_ct_cbcdec_vtable)
 
 #define SPEED_DES(iname) \
 SPEED_BLOCKCIPHER_CBC(DES CBC encrypt (iname), des_ ## iname ## _cbcenc, des_ ## iname, 8, enc) \
@@ -287,6 +321,34 @@ test_speed_ghash_ctmul64(void)
 	test_speed_ghash_inner("GHASH (ctmul64)", &br_ghash_ctmul64);
 }
 
+static void
+test_speed_ghash_pclmul(void)
+{
+	br_ghash gh;
+
+	gh = br_ghash_pclmul_get();
+	if (gh == 0) {
+		printf("%-30s UNAVAILABLE\n", "GHASH (pclmul)");
+		fflush(stdout);
+	} else {
+		test_speed_ghash_inner("GHASH (pclmul)", gh);
+	}
+}
+
+static void
+test_speed_ghash_pwr8(void)
+{
+	br_ghash gh;
+
+	gh = br_ghash_pwr8_get();
+	if (gh == 0) {
+		printf("%-30s UNAVAILABLE\n", "GHASH (pwr8)");
+		fflush(stdout);
+	} else {
+		test_speed_ghash_inner("GHASH (pwr8)", gh);
+	}
+}
+
 static uint32_t
 fake_chacha20(const void *key, const void *iv,
 	uint32_t cc, void *data, size_t len)
@@ -345,6 +407,19 @@ static void
 test_speed_poly1305_ctmul(void)
 {
 	test_speed_poly1305_inner("Poly1305 (ctmul)", &br_poly1305_ctmul_run);
+}
+
+static void
+test_speed_poly1305_ctmul32(void)
+{
+	test_speed_poly1305_inner("Poly1305 (ctmul32)",
+		&br_poly1305_ctmul32_run);
+}
+
+static void
+test_speed_poly1305_i15(void)
+{
+	test_speed_poly1305_inner("Poly1305 (i15)", &br_poly1305_i15_run);
 }
 
 static const unsigned char RSA_N[] = {
@@ -558,6 +633,13 @@ test_speed_rsa_inner(char *name,
 }
 
 static void
+test_speed_rsa_i15(void)
+{
+	test_speed_rsa_inner("RSA i15",
+		&br_rsa_i15_public, &br_rsa_i15_private);
+}
+
+static void
 test_speed_rsa_i31(void)
 {
 	test_speed_rsa_inner("RSA i31",
@@ -572,7 +654,7 @@ test_speed_rsa_i32(void)
 }
 
 static void
-test_speed_ec_inner(const char *name,
+test_speed_ec_inner_1(const char *name,
 	const br_ec_impl *impl, const br_ec_curve_def *cd)
 {
 	unsigned char bx[80], U[160];
@@ -614,11 +696,118 @@ test_speed_ec_inner(const char *name,
 }
 
 static void
+test_speed_ec_inner_2(const char *name,
+	const br_ec_impl *impl, const br_ec_curve_def *cd)
+{
+	unsigned char bx[80], U[160];
+	uint32_t x[22], n[22];
+	size_t nlen;
+	int i;
+	long num;
+
+	nlen = cd->order_len;
+	br_i31_decode(n, cd->order, nlen);
+	memset(bx, 'T', sizeof bx);
+	br_i31_decode_reduce(x, bx, sizeof bx, n);
+	br_i31_encode(bx, nlen, x);
+	for (i = 0; i < 10; i ++) {
+		impl->mulgen(U, bx, nlen, cd->curve);
+	}
+	num = 10;
+	for (;;) {
+		clock_t begin, end;
+		double tt;
+		long k;
+
+		begin = clock();
+		for (k = num; k > 0; k --) {
+			impl->mulgen(U, bx, nlen, cd->curve);
+		}
+		end = clock();
+		tt = (double)(end - begin) / CLOCKS_PER_SEC;
+		if (tt >= 2.0) {
+			printf("%-30s %8.2f mul/s\n", name,
+				(double)num / tt);
+			fflush(stdout);
+			break;
+		}
+		num <<= 1;
+	}
+}
+
+static void
+test_speed_ec_inner(const char *name,
+	const br_ec_impl *impl, const br_ec_curve_def *cd)
+{
+	char tmp[50];
+
+	test_speed_ec_inner_1(name, impl, cd);
+	sprintf(tmp, "%s (FP)", name);
+	test_speed_ec_inner_2(tmp, impl, cd);
+}
+
+static void
+test_speed_ec_p256_m15(void)
+{
+	test_speed_ec_inner("EC p256_m15",
+		&br_ec_p256_m15, &br_secp256r1);
+}
+
+static void
+test_speed_ec_p256_m31(void)
+{
+	test_speed_ec_inner("EC p256_m31",
+		&br_ec_p256_m31, &br_secp256r1);
+}
+
+static void
+test_speed_ec_prime_i15(void)
+{
+	test_speed_ec_inner("EC prime_i15 P-256",
+		&br_ec_prime_i15, &br_secp256r1);
+	test_speed_ec_inner("EC prime_i15 P-384",
+		&br_ec_prime_i15, &br_secp384r1);
+	test_speed_ec_inner("EC prime_i15 P-521",
+		&br_ec_prime_i15, &br_secp521r1);
+}
+
+static void
 test_speed_ec_prime_i31(void)
 {
-	test_speed_ec_inner("EC i31 P-256", &br_ec_prime_i31, &br_secp256r1);
-	test_speed_ec_inner("EC i31 P-384", &br_ec_prime_i31, &br_secp384r1);
-	test_speed_ec_inner("EC i31 P-521", &br_ec_prime_i31, &br_secp521r1);
+	test_speed_ec_inner("EC prime_i31 P-256",
+		&br_ec_prime_i31, &br_secp256r1);
+	test_speed_ec_inner("EC prime_i31 P-384",
+		&br_ec_prime_i31, &br_secp384r1);
+	test_speed_ec_inner("EC prime_i31 P-521",
+		&br_ec_prime_i31, &br_secp521r1);
+}
+
+static void
+test_speed_ec_c25519_i15(void)
+{
+	test_speed_ec_inner("EC c25519_i15",
+		&br_ec_c25519_i15, &br_curve25519);
+}
+
+static void
+test_speed_ec_c25519_i31(void)
+{
+	test_speed_ec_inner("EC c25519_i31",
+		&br_ec_c25519_i31, &br_curve25519);
+}
+
+static void
+test_speed_ec_c25519_m15(void)
+{
+	test_speed_ec_inner("EC c25519_m15",
+		&br_ec_c25519_m15, &br_curve25519);
+}
+
+static void
+test_speed_ec_c25519_m31(void)
+{
+	test_speed_ec_inner("EC c25519_m31",
+		&br_ec_c25519_m31, &br_curve25519);
 }
 
 static void
@@ -707,6 +896,41 @@ test_speed_ecdsa_inner(const char *name,
 }
 
 static void
+test_speed_ecdsa_p256_m15(void)
+{
+	test_speed_ecdsa_inner("ECDSA m15 P-256",
+		&br_ec_p256_m15, &br_secp256r1,
+		&br_ecdsa_i15_sign_asn1,
+		&br_ecdsa_i15_vrfy_asn1);
+}
+
+static void
+test_speed_ecdsa_p256_m31(void)
+{
+	test_speed_ecdsa_inner("ECDSA m31 P-256",
+		&br_ec_p256_m31, &br_secp256r1,
+		&br_ecdsa_i31_sign_asn1,
+		&br_ecdsa_i31_vrfy_asn1);
+}
+
+static void
+test_speed_ecdsa_i15(void)
+{
+	test_speed_ecdsa_inner("ECDSA i15 P-256",
+		&br_ec_prime_i15, &br_secp256r1,
+		&br_ecdsa_i15_sign_asn1,
+		&br_ecdsa_i15_vrfy_asn1);
+	test_speed_ecdsa_inner("ECDSA i15 P-384",
+		&br_ec_prime_i15, &br_secp384r1,
+		&br_ecdsa_i15_sign_asn1,
+		&br_ecdsa_i15_vrfy_asn1);
+	test_speed_ecdsa_inner("ECDSA i15 P-521",
+		&br_ec_prime_i15, &br_secp521r1,
+		&br_ecdsa_i15_sign_asn1,
+		&br_ecdsa_i15_vrfy_asn1);
+}
+
+static void
 test_speed_ecdsa_i31(void)
 {
 	test_speed_ecdsa_inner("ECDSA i31 P-256",
@@ -722,120 +946,6 @@ test_speed_ecdsa_i31(void)
 		&br_ecdsa_i31_sign_asn1,
 		&br_ecdsa_i31_vrfy_asn1);
 }
-
-#if 0
-/* obsolete */
-static void
-test_speed_ec_prime_i31_inner(const char *name,
-	const unsigned char *bg, const br_ec_prime_i31_curve *cc)
-{
-	unsigned char bx[80], point[160];
-	uint32_t x[BR_EC_I31_LEN];
-	br_ec_prime_i31_jacobian P;
-	uint32_t xbl;
-	size_t plen;
-	int i;
-	long num;
-
-	xbl = cc->p[0];
-	xbl -= (xbl >> 5);
-	plen = (xbl + 7) >> 3;
-	memset(bx, 'T', sizeof bx);
-	br_i31_decode_reduce(x, bx, sizeof bx, cc->p);
-	br_i31_encode(bx, plen, x);
-	br_ec_prime_i31_decode(&P, bg, 1 + (plen << 1), cc);
-	for (i = 0; i < 10; i ++) {
-		br_ec_prime_i31_mul(&P, bx, plen, cc);
-		br_ec_prime_i31_encode(point, &P, cc);
-	}
-	num = 10;
-	for (;;) {
-		clock_t begin, end;
-		double tt;
-		long k;
-
-		begin = clock();
-		for (k = num; k > 0; k --) {
-			br_ec_prime_i31_mul(&P, bx, plen, cc);
-			br_ec_prime_i31_encode(point, &P, cc);
-		}
-		end = clock();
-		tt = (double)(end - begin) / CLOCKS_PER_SEC;
-		if (tt >= 2.0) {
-			printf("%-30s %8.2f mul/s\n", name,
-				(double)num / tt);
-			fflush(stdout);
-			break;
-		}
-		num <<= 1;
-	}
-}
-
-static void
-test_speed_ec_prime_i31(void)
-{
-	test_speed_ec_prime_i31_inner("EC i31 P-256",
-		br_g_secp256r1, &br_ec_prime_i31_secp256r1);
-	test_speed_ec_prime_i31_inner("EC i31 P-384",
-		br_g_secp384r1, &br_ec_prime_i31_secp384r1);
-	test_speed_ec_prime_i31_inner("EC i31 P-521",
-		br_g_secp521r1, &br_ec_prime_i31_secp521r1);
-}
-
-static void
-test_speed_ec_prime_i32_inner(const char *name,
-	const unsigned char *bg, const br_ec_prime_i32_curve *cc)
-{
-	unsigned char bx[80], point[160];
-	uint32_t x[BR_EC_I32_LEN];
-	br_ec_prime_i32_jacobian P;
-	size_t plen;
-	int i;
-	long num;
-
-	plen = (cc->p[0] + 7) >> 3;
-	memset(bx, 'T', sizeof bx);
-	br_i32_decode_reduce(x, bx, sizeof bx, cc->p);
-	br_i32_encode(bx, plen, x);
-	br_ec_prime_i32_decode(&P, bg, 1 + (plen << 1), cc);
-	for (i = 0; i < 10; i ++) {
-		br_ec_prime_i32_mul(&P, bx, plen, cc);
-		br_ec_prime_i32_encode(point, &P, cc);
-	}
-	num = 10;
-	for (;;) {
-		clock_t begin, end;
-		double tt;
-		long k;
-
-		begin = clock();
-		for (k = num; k > 0; k --) {
-			br_ec_prime_i32_mul(&P, bx, plen, cc);
-			br_ec_prime_i32_encode(point, &P, cc);
-		}
-		end = clock();
-		tt = (double)(end - begin) / CLOCKS_PER_SEC;
-		if (tt >= 2.0) {
-			printf("%-30s %8.2f mul/s\n", name,
-				(double)num / tt);
-			fflush(stdout);
-			break;
-		}
-		num <<= 1;
-	}
-}
-
-static void
-test_speed_ec_prime_i32(void)
-{
-	test_speed_ec_prime_i32_inner("EC i32 P-256",
-		br_g_secp256r1, &br_ec_prime_i32_secp256r1);
-	test_speed_ec_prime_i32_inner("EC i32 P-384",
-		br_g_secp384r1, &br_ec_prime_i32_secp384r1);
-	test_speed_ec_prime_i32_inner("EC i32 P-521",
-		br_g_secp521r1, &br_ec_prime_i32_secp521r1);
-}
-#endif
 
 static void
 test_speed_i31(void)
@@ -1110,6 +1220,26 @@ static const struct {
 	STU(aes192_ct64_ctr),
 	STU(aes256_ct64_ctr),
 
+	STU(aes128_x86ni_cbcenc),
+	STU(aes128_x86ni_cbcdec),
+	STU(aes192_x86ni_cbcenc),
+	STU(aes192_x86ni_cbcdec),
+	STU(aes256_x86ni_cbcenc),
+	STU(aes256_x86ni_cbcdec),
+	STU(aes128_x86ni_ctr),
+	STU(aes192_x86ni_ctr),
+	STU(aes256_x86ni_ctr),
+
+	STU(aes128_pwr8_cbcenc),
+	STU(aes128_pwr8_cbcdec),
+	STU(aes192_pwr8_cbcenc),
+	STU(aes192_pwr8_cbcdec),
+	STU(aes256_pwr8_cbcenc),
+	STU(aes256_pwr8_cbcdec),
+	STU(aes128_pwr8_ctr),
+	STU(aes192_pwr8_ctr),
+	STU(aes256_pwr8_ctr),
+
 	STU(des_tab_cbcenc),
 	STU(des_tab_cbcdec),
 	STU(3des_tab_cbcenc),
@@ -1125,12 +1255,27 @@ static const struct {
 	STU(ghash_ctmul),
 	STU(ghash_ctmul32),
 	STU(ghash_ctmul64),
+	STU(ghash_pclmul),
+	STU(ghash_pwr8),
 
 	STU(poly1305_ctmul),
+	STU(poly1305_ctmul32),
+	STU(poly1305_i15),
 
+	STU(rsa_i15),
 	STU(rsa_i31),
 	STU(rsa_i32),
+	STU(ec_prime_i15),
 	STU(ec_prime_i31),
+	STU(ec_p256_m15),
+	STU(ec_p256_m31),
+	STU(ec_c25519_i15),
+	STU(ec_c25519_i31),
+	STU(ec_c25519_m15),
+	STU(ec_c25519_m31),
+	STU(ecdsa_p256_m15),
+	STU(ecdsa_p256_m31),
+	STU(ecdsa_i15),
 	STU(ecdsa_i31),
 
 	STU(i31)

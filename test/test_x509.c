@@ -27,10 +27,22 @@
 #include <string.h>
 #include <stdint.h>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
+
 #include "bearssl.h"
 
+#define STR(x)    STR_(x)
+#define STR_(x)   #x
+#ifdef SRCDIRNAME
+#define DIRNAME        STR(SRCDIRNAME) "/test/x509"
+#else
 #define DIRNAME        "test/x509"
-#define CONFFILE       (DIRNAME "/alltests.txt")
+#endif
+#define CONFFILE       DIRNAME "/alltests.txt"
 #define DEFAULT_TIME   "2016-08-30T18:00:00Z"
 
 static void *
@@ -1519,9 +1531,9 @@ run_test_case(test_case *tc)
 			br_x509_minimal_set_hash(&ctx, id, hash_impls[u].impl);
 		}
 	}
-	br_x509_minimal_set_rsa(&ctx, br_rsa_i31_pkcs1_vrfy);
+	br_x509_minimal_set_rsa(&ctx, br_rsa_pkcs1_vrfy_get_default());
 	br_x509_minimal_set_ecdsa(&ctx,
-		&br_ec_prime_i31, br_ecdsa_i31_vrfy_asn1);
+		br_ec_get_default(), br_ecdsa_vrfy_asn1_get_default());
 
 	/*
 	 * Set the validation date.
@@ -1807,9 +1819,9 @@ test_name_extraction(void)
 		id = hash_impls[u].id;
 		br_x509_minimal_set_hash(&ctx, id, hash_impls[u].impl);
 	}
-	br_x509_minimal_set_rsa(&ctx, br_rsa_i31_pkcs1_vrfy);
+	br_x509_minimal_set_rsa(&ctx, br_rsa_pkcs1_vrfy_get_default());
 	br_x509_minimal_set_ecdsa(&ctx,
-		&br_ec_prime_i31, br_ecdsa_i31_vrfy_asn1);
+		br_ec_get_default(), br_ecdsa_vrfy_asn1_get_default());
 	string_to_time(DEFAULT_TIME, &days, &seconds);
 	br_x509_minimal_set_time(&ctx, days, seconds);
 
@@ -1970,9 +1982,58 @@ test_name_extraction(void)
 }
 
 int
-main(void)
+main(int argc, const char *argv[])
 {
 	size_t u;
+
+#ifdef SRCDIRNAME
+	/*
+	 * We want to change the current directory to that of the
+	 * executable, so that test files are reliably located. We
+	 * do that only if SRCDIRNAME is defined (old Makefile would
+	 * not do that).
+	 */
+	if (argc >= 1) {
+		const char *arg, *c;
+
+		arg = argv[0];
+		for (c = arg + strlen(arg);; c --) {
+			int sep, r;
+
+#ifdef _WIN32
+			sep = (*c == '/') || (*c == '\\');
+#else
+			sep = (*c == '/');
+#endif
+			if (sep) {
+				size_t len;
+				char *dn;
+
+				len = 1 + (c - arg);
+				dn = xmalloc(len + 1);
+				memcpy(dn, arg, len);
+				dn[len] = 0;
+#ifdef _WIN32
+				r = _chdir(dn);
+#else
+				r = chdir(dn);
+#endif
+				if (r != 0) {
+					fprintf(stderr, "warning: could not"
+						" set directory to '%s'\n", dn);
+				}
+				xfree(dn);
+				break;
+			}
+			if (c == arg) {
+				break;
+			}
+		}
+	}
+#else
+	(void)argc;
+	(void)argv;
+#endif
 
 	process_conf_file(CONFFILE);
 

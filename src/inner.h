@@ -32,6 +32,15 @@
 #include "bearssl.h"
 
 /*
+ * On MSVC, disable the warning about applying unary minus on an
+ * unsigned type: it is standard, we do it all the time, and for
+ * good reasons.
+ */
+#if _MSC_VER
+#pragma warning( disable : 4146 )
+#endif
+
+/*
  * Maximum size for a RSA modulus (in bits). Allocated stack buffers
  * depend on that size, so this value should be kept small. Currently,
  * 2048-bit RSA keys offer adequate security, and should still do so for
@@ -93,6 +102,98 @@
 #define BR_64   1
 #elif defined(__x86_64__) || defined(_M_X64)
 #define BR_64   1
+#endif
+#endif
+
+/*
+ * Set BR_LOMUL on platforms where it makes sense.
+ */
+#ifndef BR_LOMUL
+#if BR_ARMEL_CORTEX_GCC
+#define BR_LOMUL   1
+#endif
+#endif
+
+/*
+ * Determine whether x86 AES instructions are understood by the compiler.
+ */
+#ifndef BR_AES_X86NI
+
+#if (__i386__ || __x86_64__) \
+	&& ((__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 8)) \
+	    || (__clang_major__ > 3 \
+	        || (__clang_major__ == 3 && __clang_minor__ >= 7)))
+#define BR_AES_X86NI   1
+#elif (_M_IX86 || _M_X64) && (_MSC_VER >= 1700)
+#define BR_AES_X86NI   1
+#endif
+#endif
+
+/*
+ * If we use x86 AES instruction, determine the compiler brand.
+ */
+#if BR_AES_X86NI
+#ifndef BR_AES_X86NI_GCC
+#if __GNUC__
+#define BR_AES_X86NI_GCC   1
+#endif
+#endif
+#ifndef BR_AES_X86NI_MSC
+#if _MSC_VER >= 1700
+#define BR_AES_X86NI_MSC   1
+#endif
+#endif
+#endif
+
+/*
+ * A macro to tag a function with a "target" attribute (for GCC and Clang).
+ */
+#if BR_AES_X86NI_GCC
+#define BR_TARGET(x)   __attribute__((target(x)))
+#else
+#define BR_TARGET(x)
+#endif
+
+/*
+ * POWER8 crypto support. We rely on compiler macros for the
+ * architecture, since we do not have a reliable, simple way to detect
+ * the required support at runtime (we could try running an opcode, and
+ * trapping the exception or signal on illegal instruction, but this
+ * induces some non-trivial OS dependencies that we would prefer to
+ * avoid if possible).
+ */
+#ifndef BR_POWER8
+#if __GNUC__ && ((_ARCH_PWR8 || _ARCH_PPC) && __CRYPTO__)
+#define BR_POWER8   1
+#endif
+#endif
+
+/*
+ * Detect endinanness on POWER8.
+ */
+#if BR_POWER8
+#if defined BR_POWER8_LE
+#undef BR_POWER8_BE
+#if BR_POWER8_LE
+#define BR_POWER8_BE   0
+#else
+#define BR_POWER8_BE   1
+#endif
+#elif defined BR_POWER8_BE
+#undef BR_POWER8_LE
+#if BR_POWER8_BE
+#define BR_POWER8_LE   0
+#else
+#define BR_POWER8_LE   1
+#endif
+#else
+#if __LITTLE_ENDIAN__
+#define BR_POWER8_LE   1
+#define BR_POWER8_BE   0
+#else
+#define BR_POWER8_LE   0
+#define BR_POWER8_BE   1
+#endif
 #endif
 #endif
 
@@ -300,7 +401,7 @@ static inline void
 br_multihash_copyimpl(br_multihash_context *dst,
 	const br_multihash_context *src)
 {
-	memcpy(dst->impl, src->impl, sizeof src->impl);
+	memcpy((void *)dst->impl, src->impl, sizeof src->impl);
 }
 
 /* ==================================================================== */
@@ -532,11 +633,30 @@ MAX(uint32_t x, uint32_t y)
  * (old) platforms where the default MUL31 is not. Unfortunately, it is
  * also substantially slower, and yields larger code, on more modern
  * platforms, which is why it is deactivated by default.
+ *
+ * MUL31_lo() must do some extra work because on some platforms, the
+ * _signed_ multiplication may return early if the top bits are 1.
+ * Simply truncating (casting) the output of MUL31() would not be
+ * sufficient, because the compiler may notice that we keep only the low
+ * word, and then replace automatically the unsigned multiplication with
+ * a signed multiplication opcode.
  */
 #define MUL31(x, y)   ((uint64_t)((x) | (uint32_t)0x80000000) \
                        * (uint64_t)((y) | (uint32_t)0x80000000) \
                        - ((uint64_t)(x) << 31) - ((uint64_t)(y) << 31) \
                        - ((uint64_t)1 << 62))
+static inline uint32_t
+MUL31_lo(uint32_t x, uint32_t y)
+{
+	uint32_t xl, xh;
+	uint32_t yl, yh;
+
+	xl = (x & 0xFFFF) | (uint32_t)0x80000000;
+	xh = (x >> 16) | (uint32_t)0x80000000;
+	yl = (y & 0xFFFF) | (uint32_t)0x80000000;
+	yh = (y >> 16) | (uint32_t)0x80000000;
+	return (xl * yl + ((xl * yh + xh * yl) << 16)) & (uint32_t)0x7FFFFFFF;
+}
 
 #else
 
@@ -544,9 +664,49 @@ MAX(uint32_t x, uint32_t y)
  * Multiply two 31-bit integers, with a 62-bit result. This default
  * implementation assumes that the basic multiplication operator
  * yields constant-time code.
+ * The MUL31_lo() macro returns only the low 31 bits of the product.
  */
-#define MUL31(x, y)   ((uint64_t)(x) * (uint64_t)(y))
+#define MUL31(x, y)     ((uint64_t)(x) * (uint64_t)(y))
+#define MUL31_lo(x, y)  (((uint32_t)(x) * (uint32_t)(y)) & (uint32_t)0x7FFFFFFF)
 
+#endif
+
+/*
+ * Multiply two words together; the sum of the lengths of the two
+ * operands must not exceed 31 (for instance, one operand may use 16
+ * bits if the other fits on 15). If BR_CT_MUL15 is non-zero, then the
+ * macro will contain some extra operations that help in making the
+ * operation constant-time on some platforms, where the basic 32-bit
+ * multiplication is not constant-time.
+ */
+#if BR_CT_MUL15
+#define MUL15(x, y)   (((uint32_t)(x) | (uint32_t)0x80000000) \
+                       * ((uint32_t)(y) | (uint32_t)0x80000000) \
+		       & (uint32_t)0x7FFFFFFF)
+#else
+#define MUL15(x, y)   ((uint32_t)(x) * (uint32_t)(y))
+#endif
+
+/*
+ * Arithmetic right shift (sign bit is copied). What happens when
+ * right-shifting a negative value is _implementation-defined_, so it
+ * does not trigger undefined behaviour, but it is still up to each
+ * compiler to define (and document) what it does. Most/all compilers
+ * will do an arithmetic shift, the sign bit being used to fill the
+ * holes; this is a native operation on the underlying CPU, and it would
+ * make little sense for the compiler to do otherwise. GCC explicitly
+ * documents that it follows that convention.
+ *
+ * Still, if BR_NO_ARITH_SHIFT is defined (and non-zero), then an
+ * alternate version will be used, that does not rely on such
+ * implementation-defined behaviour. Unfortunately, it is also slower
+ * and yields bigger code, which is why it is deactivated by default.
+ */
+#if BR_NO_ARITH_SHIFT
+#define ARSH(x, n)   (((uint32_t)(x) >> (n)) \
+                      | ((-((uint32_t)(x) >> 31)) << (32 - (n))))
+#else
+#define ARSH(x, n)   ((*(int32_t *)&(x)) >> (n))
 #endif
 
 /*
@@ -1009,6 +1169,60 @@ void br_i31_mulacc(uint32_t *d, const uint32_t *a, const uint32_t *b);
 
 /* ==================================================================== */
 
+/*
+ * FIXME: document "i15" functions.
+ */
+
+static inline void
+br_i15_zero(uint16_t *x, uint16_t bit_len)
+{
+	*x ++ = bit_len;
+	memset(x, 0, ((bit_len + 15) >> 4) * sizeof *x);
+}
+
+uint32_t br_i15_iszero(const uint16_t *x);
+
+uint16_t br_i15_ninv15(uint16_t x);
+
+uint32_t br_i15_add(uint16_t *a, const uint16_t *b, uint32_t ctl);
+
+uint32_t br_i15_sub(uint16_t *a, const uint16_t *b, uint32_t ctl);
+
+void br_i15_muladd_small(uint16_t *x, uint16_t z, const uint16_t *m);
+
+void br_i15_montymul(uint16_t *d, const uint16_t *x, const uint16_t *y,
+	const uint16_t *m, uint16_t m0i);
+
+void br_i15_to_monty(uint16_t *x, const uint16_t *m);
+
+void br_i15_modpow(uint16_t *x, const unsigned char *e, size_t elen,
+	const uint16_t *m, uint16_t m0i, uint16_t *t1, uint16_t *t2);
+
+uint32_t br_i15_modpow_opt(uint16_t *x, const unsigned char *e, size_t elen,
+	const uint16_t *m, uint16_t m0i, uint16_t *tmp, size_t twlen);
+
+void br_i15_encode(void *dst, size_t len, const uint16_t *x);
+
+uint32_t br_i15_decode_mod(uint16_t *x,
+	const void *src, size_t len, const uint16_t *m);
+
+void br_i15_rshift(uint16_t *x, int count);
+
+uint32_t br_i15_bit_length(uint16_t *x, size_t xlen);
+
+void br_i15_decode(uint16_t *x, const void *src, size_t len);
+
+void br_i15_from_monty(uint16_t *x, const uint16_t *m, uint16_t m0i);
+
+void br_i15_decode_reduce(uint16_t *x,
+	const void *src, size_t len, const uint16_t *m);
+
+void br_i15_reduce(uint16_t *x, const uint16_t *a, const uint16_t *m);
+
+void br_i15_mulacc(uint16_t *d, const uint16_t *a, const uint16_t *b);
+
+/* ==================================================================== */
+
 static inline size_t
 br_digest_size(const br_hash_class *digest_class)
 {
@@ -1306,6 +1520,63 @@ unsigned br_aes_ct64_keysched(uint64_t *comp_skey,
 void br_aes_ct64_skey_expand(uint64_t *skey,
 	unsigned num_rounds, const uint64_t *comp_skey);
 
+/*
+ * Test support for AES-NI opcodes.
+ */
+int br_aes_x86ni_supported(void);
+
+/*
+ * AES key schedule, using x86 AES-NI instructions. This yields the
+ * subkeys in the encryption direction. Number of rounds is returned.
+ * Key size MUST be 16, 24 or 32 bytes; otherwise, 0 is returned.
+ */
+unsigned br_aes_x86ni_keysched_enc(unsigned char *skni,
+	const void *key, size_t len);
+
+/*
+ * AES key schedule, using x86 AES-NI instructions. This yields the
+ * subkeys in the decryption direction. Number of rounds is returned.
+ * Key size MUST be 16, 24 or 32 bytes; otherwise, 0 is returned.
+ */
+unsigned br_aes_x86ni_keysched_dec(unsigned char *skni,
+	const void *key, size_t len);
+
+/*
+ * Test support for AES POWER8 opcodes.
+ */
+int br_aes_pwr8_supported(void);
+
+/*
+ * AES key schedule, using POWER8 instructions. This yields the
+ * subkeys in the encryption direction. Number of rounds is returned.
+ * Key size MUST be 16, 24 or 32 bytes; otherwise, 0 is returned.
+ */
+unsigned br_aes_pwr8_keysched(unsigned char *skni,
+	const void *key, size_t len);
+
+/* ==================================================================== */
+/*
+ * RSA.
+ */
+
+/*
+ * Apply proper PKCS#1 v1.5 padding (for signatures). 'hash_oid' is
+ * the encoded hash function OID, or NULL.
+ */
+uint32_t br_rsa_pkcs1_sig_pad(const unsigned char *hash_oid,
+	const unsigned char *hash, size_t hash_len,
+	uint32_t n_bitlen, unsigned char *x);
+
+/*
+ * Check PKCS#1 v1.5 padding (for signatures). 'hash_oid' is the encoded
+ * hash function OID, or NULL. The provided 'sig' value is _after_ the
+ * modular exponentiation, i.e. it should be the padded hash. On
+ * success, the hashed message is extracted.
+ */
+uint32_t br_rsa_pkcs1_sig_unpad(const unsigned char *sig, size_t sig_len,
+	const unsigned char *hash_oid, size_t hash_len,
+	unsigned char *hash_out);
+
 /* ==================================================================== */
 /*
  * Elliptic curves.
@@ -1328,24 +1599,13 @@ extern const br_ec_curve_def br_secp384r1;
 extern const br_ec_curve_def br_secp521r1;
 
 /*
- * Type for the parameters for a "prime curve":
- *   coordinates are in GF(p), with p prime
- *   curve equation is Y^2 = X^3 - 3*X + b
- *   b is in Montgomery representation
- *   curve order is n and is prime
- *   base point is G (encoded) and has order n
+ * For Curve25519, the advertised "order" really is 2^255-1, since the
+ * point multipliction function really works over arbitrary 255-bit
+ * scalars. This value is only meant as a hint for ECDH key generation;
+ * only ECDSA uses the exact curve order, and ECDSA is not used with
+ * that specific curve.
  */
-typedef struct {
-	const uint32_t *p;
-	const uint32_t *b;
-	const uint32_t p0i;
-} br_ec_prime_i31_curve;
-
-extern const br_ec_prime_i31_curve br_ec_prime_i31_secp256r1;
-extern const br_ec_prime_i31_curve br_ec_prime_i31_secp384r1;
-extern const br_ec_prime_i31_curve br_ec_prime_i31_secp521r1;
-
-#define BR_EC_I31_LEN   ((BR_MAX_EC_SIZE + 61) / 31)
+extern const br_ec_curve_def br_curve25519;
 
 /*
  * Decode some bytes as an i31 integer, with truncation (corresponding
@@ -1355,6 +1615,16 @@ extern const br_ec_prime_i31_curve br_ec_prime_i31_secp521r1;
  * of exactly that many bits in the source (capped at the source length).
  */
 void br_ecdsa_i31_bits2int(uint32_t *x,
+	const void *src, size_t len, uint32_t ebitlen);
+
+/*
+ * Decode some bytes as an i15 integer, with truncation (corresponding
+ * to the 'bits2int' operation in RFC 6979). The target ENCODED bit
+ * length is provided as last parameter. The resulting value will have
+ * this declared bit length, and consists the big-endian unsigned decoding
+ * of exactly that many bits in the source (capped at the source length).
+ */
+void br_ecdsa_i15_bits2int(uint16_t *x,
 	const void *src, size_t len, uint32_t ebitlen);
 
 /* ==================================================================== */
@@ -1558,6 +1828,87 @@ void br_ssl_hs_server_run(void *ctx);
  * functions returns 0.
  */
 int br_ssl_choose_hash(unsigned bf);
+
+/* ==================================================================== */
+
+/*
+ * PowerPC / POWER assembly stuff. The special BR_POWER_ASM_MACROS macro
+ * must be defined before including this file; this is done by source
+ * files that use some inline assembly for PowerPC / POWER machines.
+ */
+
+#if BR_POWER_ASM_MACROS
+
+#define lxvw4x(xt, ra, rb)        lxvw4x_(xt, ra, rb)
+#define stxvw4x(xt, ra, rb)       stxvw4x_(xt, ra, rb)
+
+#define bdnz(foo)                 bdnz_(foo)
+#define beq(foo)                  beq_(foo)
+
+#define li(rx, value)             li_(rx, value)
+#define addi(rx, ra, imm)         addi_(rx, ra, imm)
+#define cmpldi(rx, imm)           cmpldi_(rx, imm)
+#define mtctr(rx)                 mtctr_(rx)
+#define vspltb(vrt, vrb, uim)     vspltb_(vrt, vrb, uim)
+#define vspltw(vrt, vrb, uim)     vspltw_(vrt, vrb, uim)
+#define vspltisb(vrt, imm)        vspltisb_(vrt, imm)
+#define vspltisw(vrt, imm)        vspltisw_(vrt, imm)
+#define vrlw(vrt, vra, vrb)       vrlw_(vrt, vra, vrb)
+#define vsbox(vrt, vra)           vsbox_(vrt, vra)
+#define vxor(vrt, vra, vrb)       vxor_(vrt, vra, vrb)
+#define vand(vrt, vra, vrb)       vand_(vrt, vra, vrb)
+#define vsro(vrt, vra, vrb)       vsro_(vrt, vra, vrb)
+#define vsl(vrt, vra, vrb)        vsl_(vrt, vra, vrb)
+#define vsldoi(vt, va, vb, sh)    vsldoi_(vt, va, vb, sh)
+#define vsr(vrt, vra, vrb)        vsr_(vrt, vra, vrb)
+#define vadduwm(vrt, vra, vrb)    vadduwm_(vrt, vra, vrb)
+#define vsububm(vrt, vra, vrb)    vsububm_(vrt, vra, vrb)
+#define vsubuwm(vrt, vra, vrb)    vsubuwm_(vrt, vra, vrb)
+#define vsrw(vrt, vra, vrb)       vsrw_(vrt, vra, vrb)
+#define vcipher(vt, va, vb)       vcipher_(vt, va, vb)
+#define vcipherlast(vt, va, vb)   vcipherlast_(vt, va, vb)
+#define vncipher(vt, va, vb)      vncipher_(vt, va, vb)
+#define vncipherlast(vt, va, vb)  vncipherlast_(vt, va, vb)
+#define vperm(vt, va, vb, vc)     vperm_(vt, va, vb, vc)
+#define vpmsumd(vt, va, vb)       vpmsumd_(vt, va, vb)
+#define xxpermdi(vt, va, vb, d)   xxpermdi_(vt, va, vb, d)
+
+#define lxvw4x_(xt, ra, rb)       "\tlxvw4x\t" #xt "," #ra "," #rb "\n"
+#define stxvw4x_(xt, ra, rb)      "\tstxvw4x\t" #xt "," #ra "," #rb "\n"
+
+#define label(foo)                #foo "%=:\n"
+#define bdnz_(foo)                "\tbdnz\t" #foo "%=\n"
+#define beq_(foo)                 "\tbeq\t" #foo "%=\n"
+
+#define li_(rx, value)            "\tli\t" #rx "," #value "\n"
+#define addi_(rx, ra, imm)        "\taddi\t" #rx "," #ra "," #imm "\n"
+#define cmpldi_(rx, imm)          "\tcmpldi\t" #rx "," #imm "\n"
+#define mtctr_(rx)                "\tmtctr\t" #rx "\n"
+#define vspltb_(vrt, vrb, uim)    "\tvspltb\t" #vrt "," #vrb "," #uim "\n"
+#define vspltw_(vrt, vrb, uim)    "\tvspltw\t" #vrt "," #vrb "," #uim "\n"
+#define vspltisb_(vrt, imm)       "\tvspltisb\t" #vrt "," #imm "\n"
+#define vspltisw_(vrt, imm)       "\tvspltisw\t" #vrt "," #imm "\n"
+#define vrlw_(vrt, vra, vrb)      "\tvrlw\t" #vrt "," #vra "," #vrb "\n"
+#define vsbox_(vrt, vra)          "\tvsbox\t" #vrt "," #vra "\n"
+#define vxor_(vrt, vra, vrb)      "\tvxor\t" #vrt "," #vra "," #vrb "\n"
+#define vand_(vrt, vra, vrb)      "\tvand\t" #vrt "," #vra "," #vrb "\n"
+#define vsro_(vrt, vra, vrb)      "\tvsro\t" #vrt "," #vra "," #vrb "\n"
+#define vsl_(vrt, vra, vrb)       "\tvsl\t" #vrt "," #vra "," #vrb "\n"
+#define vsldoi_(vt, va, vb, sh)   "\tvsldoi\t" #vt "," #va "," #vb "," #sh "\n"
+#define vsr_(vrt, vra, vrb)       "\tvsr\t" #vrt "," #vra "," #vrb "\n"
+#define vadduwm_(vrt, vra, vrb)   "\tvadduwm\t" #vrt "," #vra "," #vrb "\n"
+#define vsububm_(vrt, vra, vrb)   "\tvsububm\t" #vrt "," #vra "," #vrb "\n"
+#define vsubuwm_(vrt, vra, vrb)   "\tvsubuwm\t" #vrt "," #vra "," #vrb "\n"
+#define vsrw_(vrt, vra, vrb)      "\tvsrw\t" #vrt "," #vra "," #vrb "\n"
+#define vcipher_(vt, va, vb)      "\tvcipher\t" #vt "," #va "," #vb "\n"
+#define vcipherlast_(vt, va, vb)  "\tvcipherlast\t" #vt "," #va "," #vb "\n"
+#define vncipher_(vt, va, vb)     "\tvncipher\t" #vt "," #va "," #vb "\n"
+#define vncipherlast_(vt, va, vb) "\tvncipherlast\t" #vt "," #va "," #vb "\n"
+#define vperm_(vt, va, vb, vc)    "\tvperm\t" #vt "," #va "," #vb "," #vc "\n"
+#define vpmsumd_(vt, va, vb)      "\tvpmsumd\t" #vt "," #va "," #vb "\n"
+#define xxpermdi_(vt, va, vb, d)  "\txxpermdi\t" #vt "," #va "," #vb "," #d "\n"
+
+#endif
 
 /* ==================================================================== */
 

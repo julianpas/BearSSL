@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016 Thomas Pornin <pornin@bolet.org>
+ * Copyright (c) 2017 Thomas Pornin <pornin@bolet.org>
  *
  * Permission is hereby granted, free of charge, to any person obtaining 
  * a copy of this software and associated documentation files (the
@@ -24,25 +24,13 @@
 
 #include "inner.h"
 
-static const uint32_t P384_P[] = {
-	0x0000018C,
-	0x7FFFFFFF, 0x00000001, 0x00000000, 0x7FFFFFF8,
-	0x7FFFFFEF, 0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF,
-	0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF,
-	0x00000FFF
-};
-
-static const uint32_t P384_B[] = {
-	0x0000018C,
-	0x6E666840, 0x070D0392, 0x5D810231, 0x7651D50C,
-	0x17E218D6, 0x1B192002, 0x44EFE441, 0x3A524E2B,
-	0x2719BA5F, 0x41F02209, 0x36C5643E, 0x5813EFFE,
-	0x000008A5
-};
-
-/* see inner.h */
-const br_ec_prime_i31_curve br_ec_prime_i31_secp384r1 = {
-	P384_P,
-	P384_B,
-	0x00000001
-};
+/* see bearssl_rsa.h */
+br_rsa_private
+br_rsa_private_get_default(void)
+{
+#if BR_LOMUL
+	return &br_rsa_i15_private;
+#else
+	return &br_rsa_i31_private;
+#endif
+}

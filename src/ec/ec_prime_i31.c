@@ -135,7 +135,7 @@ typedef struct {
 
 /*
  * We use a custom interpreter that uses a dozen registers, and
- * only four operations:
+ * only six operations:
  *    MSET(d, a)       copy a into d
  *    MADD(d, a)       d = d+a (modular)
  *    MSUB(d, a)       d = d-a (modular)
@@ -717,6 +717,14 @@ api_order(int curve, size_t *len)
 	return cd->order;
 }
 
+static size_t
+api_xoff(int curve, size_t *len)
+{
+	api_generator(curve, len);
+	*len >>= 1;
+	return 1;
+}
+
 static uint32_t
 api_mul(unsigned char *G, size_t Glen,
 	const unsigned char *x, size_t xlen, int curve)
@@ -730,6 +738,19 @@ api_mul(unsigned char *G, size_t Glen,
 	point_mul(&P, x, xlen, cc);
 	point_encode(G, &P, cc);
 	return r;
+}
+
+static size_t
+api_mulgen(unsigned char *R,
+	const unsigned char *x, size_t xlen, int curve)
+{
+	const unsigned char *G;
+	size_t Glen;
+
+	G = api_generator(curve, &Glen);
+	memcpy(R, G, Glen);
+	api_mul(R, Glen, x, xlen, curve);
+	return Glen;
 }
 
 static uint32_t
@@ -749,6 +770,11 @@ api_muladd(unsigned char *A, const unsigned char *B, size_t len,
 
 	cc = id_to_curve(curve);
 	r = point_decode(&P, A, len, cc);
+	if (B == NULL) {
+		size_t Glen;
+
+		B = api_generator(curve, &Glen);
+	}
 	r &= point_decode(&Q, B, len, cc);
 	point_mul(&P, x, xlen, cc);
 	point_mul(&Q, y, ylen, cc);
@@ -786,6 +812,8 @@ const br_ec_impl br_ec_prime_i31 = {
 	(uint32_t)0x03800000,
 	&api_generator,
 	&api_order,
+	&api_xoff,
 	&api_mul,
+	&api_mulgen,
 	&api_muladd
 };
