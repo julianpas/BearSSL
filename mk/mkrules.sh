@@ -134,6 +134,7 @@ coresrc=" \
 	src/int/i31_fmont.c \
 	src/int/i31_iszero.c \
 	src/int/i31_modpow.c \
+	src/int/i31_modpow2.c \
 	src/int/i31_montmul.c \
 	src/int/i31_mulacc.c \
 	src/int/i31_muladd.c \
@@ -159,6 +160,7 @@ coresrc=" \
 	src/int/i32_reduce.c \
 	src/int/i32_sub.c \
 	src/int/i32_tmont.c \
+	src/int/i62_modpow2.c \
 	src/mac/hmac.c \
 	src/mac/hmac_ct.c \
 	src/rand/hmac_drbg.c \
@@ -178,6 +180,10 @@ coresrc=" \
 	src/rsa/rsa_i32_pkcs1_vrfy.c \
 	src/rsa/rsa_i32_priv.c \
 	src/rsa/rsa_i32_pub.c \
+	src/rsa/rsa_i62_pkcs1_sign.c \
+	src/rsa/rsa_i62_pkcs1_vrfy.c \
+	src/rsa/rsa_i62_priv.c \
+	src/rsa/rsa_i62_pub.c \
 	src/rsa/rsa_pkcs1_sig_pad.c \
 	src/rsa/rsa_pkcs1_sig_unpad.c \
 	src/rsa/rsa_ssl_decrypt.c \
@@ -202,6 +208,7 @@ coresrc=" \
 	src/ssl/ssl_hs_client.c \
 	src/ssl/ssl_hs_server.c \
 	src/ssl/ssl_io.c \
+	src/ssl/ssl_keyexport.c \
 	src/ssl/ssl_lru.c \
 	src/ssl/ssl_rec_cbc.c \
 	src/ssl/ssl_rec_chapol.c \
@@ -259,6 +266,7 @@ coresrc=" \
 	src/symcipher/des_tab_cbcenc.c \
 	src/symcipher/poly1305_ctmul.c \
 	src/symcipher/poly1305_ctmul32.c \
+	src/symcipher/poly1305_ctmulq.c \
 	src/symcipher/poly1305_i15.c \
 	src/x509/skey_decoder.c \
 	src/x509/x509_decoder.c \
@@ -424,7 +432,7 @@ tools: \$(BRSSL)
 
 tests: \$(TESTCRYPTO) \$(TESTSPEED) \$(TESTX509)
 
-T0: \$(T0COMP)
+T0: \$(T0COMP) src\$Pssl\$Pssl_hs_common.t0 src\$Pssl\$Pssl_hs_client.t0 src\$Pssl\$Pssl_hs_server.t0 src\$Px509\$Pasn1.t0 src\$Px509\$Pskey_decoder.t0 src\$Px509\$Px509_decoder.t0 src\$Px509\$Px509_minimal.t0
 	\$(RUNT0COMP) -o src\$Pcodec\$Ppemdec -r br_pem_decoder src\$Pcodec\$Ppemdec.t0
 	\$(RUNT0COMP) -o src\$Pssl\$Pssl_hs_client -r br_ssl_hs_client src\$Pssl\$Pssl_hs_common.t0 src\$Pssl\$Pssl_hs_client.t0
 	\$(RUNT0COMP) -o src\$Pssl\$Pssl_hs_server -r br_ssl_hs_server src\$Pssl\$Pssl_hs_common.t0 src\$Pssl\$Pssl_hs_server.t0

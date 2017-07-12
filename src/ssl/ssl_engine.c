@@ -1132,7 +1132,7 @@ br_ssl_engine_flush_record(br_ssl_engine_context *cc)
 unsigned char *
 br_ssl_engine_sendapp_buf(const br_ssl_engine_context *cc, size_t *len)
 {
-	if (!cc->application_data) {
+	if (!(cc->application_data & 1)) {
 		*len = 0;
 		return NULL;
 	}
@@ -1150,7 +1150,7 @@ br_ssl_engine_sendapp_ack(br_ssl_engine_context *cc, size_t len)
 unsigned char *
 br_ssl_engine_recvapp_buf(const br_ssl_engine_context *cc, size_t *len)
 {
-	if (!cc->application_data
+	if (!(cc->application_data & 1)
 		|| cc->record_type_in != BR_SSL_APPLICATION_DATA)
 	{
 		*len = 0;
@@ -1180,7 +1180,7 @@ br_ssl_engine_sendrec_ack(br_ssl_engine_context *cc, size_t len)
 	sendrec_ack(cc, len);
 	if (len != 0 && !has_rec_tosend(cc)
 		&& (cc->record_type_out != BR_SSL_APPLICATION_DATA
-		|| cc->application_data == 0))
+		|| (cc->application_data & 1) == 0))
 	{
 		jump_handshake(cc, 0);
 	}
@@ -1218,9 +1218,20 @@ br_ssl_engine_recvrec_ack(br_ssl_engine_context *cc, size_t len)
 			jump_handshake(cc, 0);
 			break;
 		case BR_SSL_APPLICATION_DATA:
-			if (cc->application_data) {
+			if (cc->application_data == 1) {
 				break;
 			}
+
+			/*
+			 * If we are currently closing, and waiting for
+			 * a close_notify from the peer, then incoming
+			 * application data should be discarded.
+			 */
+			if (cc->application_data == 2) {
+				recvpld_ack(cc, len);
+				break;
+			}
+
 			/* Fall through */
 		default:
 			br_ssl_engine_fail(cc, BR_ERR_UNEXPECTED);
@@ -1282,7 +1293,7 @@ br_ssl_engine_current_state(const br_ssl_engine_context *cc)
 void
 br_ssl_engine_flush(br_ssl_engine_context *cc, int force)
 {
-	if (!br_ssl_engine_closed(cc) && cc->application_data) {
+	if (!br_ssl_engine_closed(cc) && (cc->application_data & 1) != 0) {
 		sendpld_flush(cc, force);
 	}
 }
@@ -1324,13 +1335,14 @@ br_ssl_engine_compute_master(br_ssl_engine_context *cc,
 	int prf_id, const void *pms, size_t pms_len)
 {
 	br_tls_prf_impl iprf;
-	unsigned char seed[64];
+	br_tls_prf_seed_chunk seed[2] = {
+		{ cc->client_random, sizeof cc->client_random },
+		{ cc->server_random, sizeof cc->server_random }
+	};
 
 	iprf = br_ssl_engine_get_PRF(cc, prf_id);
-	memcpy(seed, cc->client_random, 32);
-	memcpy(seed + 32, cc->server_random, 32);
 	iprf(cc->session.master_secret, sizeof cc->session.master_secret,
-		pms, pms_len, "master secret", seed, sizeof seed);
+		pms, pms_len, "master secret", 2, seed);
 }
 
 /*
@@ -1341,14 +1353,15 @@ compute_key_block(br_ssl_engine_context *cc, int prf_id,
 	size_t half_len, unsigned char *kb)
 {
 	br_tls_prf_impl iprf;
-	unsigned char seed[64];
+	br_tls_prf_seed_chunk seed[2] = {
+		{ cc->server_random, sizeof cc->server_random },
+		{ cc->client_random, sizeof cc->client_random }
+	};
 
 	iprf = br_ssl_engine_get_PRF(cc, prf_id);
-	memcpy(seed, cc->server_random, 32);
-	memcpy(seed + 32, cc->client_random, 32);
 	iprf(kb, half_len << 1,
 		cc->session.master_secret, sizeof cc->session.master_secret,
-		"key expansion", seed, sizeof seed);
+		"key expansion", 2, seed);
 }
 
 /* see inner.h */

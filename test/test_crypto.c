@@ -1075,21 +1075,43 @@ test_HMAC_DRBG(void)
 }
 
 static void
-do_KAT_PRF(
-	void (*prf)(void *dst, size_t len,
-		const void *secret, size_t secret_len,
-		const char *label, const void *seed, size_t seed_len),
+do_KAT_PRF(br_tls_prf_impl prf,
 	const char *ssecret, const char *label, const char *sseed,
 	const char *sref)
 {
 	unsigned char secret[100], seed[100], ref[500], out[500];
 	size_t secret_len, seed_len, ref_len;
+	br_tls_prf_seed_chunk chunks[2];
 
 	secret_len = hextobin(secret, ssecret);
 	seed_len = hextobin(seed, sseed);
 	ref_len = hextobin(ref, sref);
-	prf(out, ref_len, secret, secret_len, label, seed, seed_len);
-	check_equals("TLS PRF KAT", out, ref, ref_len);
+
+	chunks[0].data = seed;
+	chunks[0].len = seed_len;
+	prf(out, ref_len, secret, secret_len, label, 1, chunks);
+	check_equals("TLS PRF KAT 1", out, ref, ref_len);
+
+	chunks[0].data = seed;
+	chunks[0].len = seed_len;
+	chunks[1].data = NULL;
+	chunks[1].len = 0;
+	prf(out, ref_len, secret, secret_len, label, 2, chunks);
+	check_equals("TLS PRF KAT 2", out, ref, ref_len);
+
+	chunks[0].data = NULL;
+	chunks[0].len = 0;
+	chunks[1].data = seed;
+	chunks[1].len = seed_len;
+	prf(out, ref_len, secret, secret_len, label, 2, chunks);
+	check_equals("TLS PRF KAT 3", out, ref, ref_len);
+
+	chunks[0].data = seed;
+	chunks[0].len = seed_len >> 1;
+	chunks[1].data = seed + chunks[0].len;
+	chunks[1].len = seed_len - chunks[0].len;
+	prf(out, ref_len, secret, secret_len, label, 2, chunks);
+	check_equals("TLS PRF KAT 4", out, ref, ref_len);
 }
 
 static void
@@ -3133,6 +3155,71 @@ test_AES_generic(char *name,
 			check_equals("KAT CBC AES decrypt (2)",
 				buf, plain, data_len);
 		}
+
+		/*
+		 * We want to check proper IV management for CBC:
+		 * encryption and decryption must properly copy the _last_
+		 * encrypted block as new IV, for all sizes.
+		 */
+		for (u = 1; u <= 35; u ++) {
+			br_hmac_drbg_context rng;
+			unsigned char x;
+			size_t key_len, data_len;
+			size_t v;
+
+			br_hmac_drbg_init(&rng, &br_sha256_vtable,
+				"seed for AES/CBC", 16);
+			x = u;
+			br_hmac_drbg_update(&rng, &x, 1);
+			data_len = u << 4;
+			for (key_len = 16; key_len <= 32; key_len += 16) {
+				unsigned char key[32];
+				unsigned char iv[16], iv1[16], iv2[16];
+				unsigned char plain[35 * 16];
+				unsigned char tmp1[sizeof plain];
+				unsigned char tmp2[sizeof plain];
+				br_aes_gen_cbcenc_keys v_ec;
+				br_aes_gen_cbcdec_keys v_dc;
+				const br_block_cbcenc_class **ec;
+				const br_block_cbcdec_class **dc;
+
+				br_hmac_drbg_generate(&rng, key, key_len);
+				br_hmac_drbg_generate(&rng, iv, sizeof iv);
+				br_hmac_drbg_generate(&rng, plain, data_len);
+
+				ec = &v_ec.vtable;
+				ve->init(ec, key, key_len);
+				memcpy(iv1, iv, sizeof iv);
+				memcpy(tmp1, plain, data_len);
+				ve->run(ec, iv1, tmp1, data_len);
+				check_equals("IV CBC AES (1)",
+					tmp1 + data_len - 16, iv1, 16);
+				memcpy(iv2, iv, sizeof iv);
+				memcpy(tmp2, plain, data_len);
+				for (v = 0; v < data_len; v += 16) {
+					ve->run(ec, iv2, tmp2 + v, 16);
+				}
+				check_equals("IV CBC AES (2)",
+					tmp2 + data_len - 16, iv2, 16);
+				check_equals("IV CBC AES (3)",
+					tmp1, tmp2, data_len);
+
+				dc = &v_dc.vtable;
+				vd->init(dc, key, key_len);
+				memcpy(iv1, iv, sizeof iv);
+				vd->run(dc, iv1, tmp1, data_len);
+				check_equals("IV CBC AES (4)", iv1, iv2, 16);
+				check_equals("IV CBC AES (5)",
+					tmp1, plain, data_len);
+				memcpy(iv2, iv, sizeof iv);
+				for (v = 0; v < data_len; v += 16) {
+					vd->run(dc, iv2, tmp2 + v, 16);
+				}
+				check_equals("IV CBC AES (6)", iv1, iv2, 16);
+				check_equals("IV CBC AES (7)",
+					tmp2, plain, data_len);
+			}
+		}
 	}
 
 	if (vc != NULL) {
@@ -4190,24 +4277,12 @@ test_Poly1305_inner(const char *name, br_poly1305_run ipoly,
 		memcpy(data, plain, len);
 		ipoly(key, nonce, data, len,
 			aad, aad_len, tmp, br_chacha20_ct_run, 1);
-		if (memcmp(data, cipher, len) != 0) {
-			fprintf(stderr, "ChaCha20+Poly1305 KAT failed (1)\n");
-			exit(EXIT_FAILURE);
-		}
-		if (memcmp(tmp, tag, 16) != 0) {
-			fprintf(stderr, "ChaCha20+Poly1305 KAT failed (2)\n");
-			exit(EXIT_FAILURE);
-		}
+		check_equals("ChaCha20+Poly1305 KAT (1)", data, cipher, len);
+		check_equals("ChaCha20+Poly1305 KAT (2)", tmp, tag, 16);
 		ipoly(key, nonce, data, len,
 			aad, aad_len, tmp, br_chacha20_ct_run, 0);
-		if (memcmp(data, plain, len) != 0) {
-			fprintf(stderr, "ChaCha20+Poly1305 KAT failed (3)\n");
-			exit(EXIT_FAILURE);
-		}
-		if (memcmp(tmp, tag, 16) != 0) {
-			fprintf(stderr, "ChaCha20+Poly1305 KAT failed (4)\n");
-			exit(EXIT_FAILURE);
-		}
+		check_equals("ChaCha20+Poly1305 KAT (3)", data, plain, len);
+		check_equals("ChaCha20+Poly1305 KAT (4)", tmp, tag, 16);
 
 		printf(".");
 		fflush(stdout);
@@ -4271,6 +4346,20 @@ test_Poly1305_i15(void)
 {
 	test_Poly1305_inner("Poly1305_i15", &br_poly1305_i15_run,
 		&br_poly1305_ctmul_run);
+}
+
+static void
+test_Poly1305_ctmulq(void)
+{
+	br_poly1305_run bp;
+
+	bp = br_poly1305_ctmulq_get();
+	if (bp == 0) {
+		printf("Test Poly1305_ctmulq: UNAVAILABLE\n");
+	} else {
+		test_Poly1305_inner("Poly1305_ctmulq", bp,
+			&br_poly1305_ctmul_run);
+	}
 }
 
 /*
@@ -4500,6 +4589,34 @@ test_RSA_i32(void)
 	test_RSA_core("RSA i32 core", &br_rsa_i32_public, &br_rsa_i32_private);
 	test_RSA_sign("RSA i32 sign", &br_rsa_i32_private,
 		&br_rsa_i32_pkcs1_sign, &br_rsa_i32_pkcs1_vrfy);
+}
+
+static void
+test_RSA_i62(void)
+{
+	br_rsa_public pub;
+	br_rsa_private priv;
+	br_rsa_pkcs1_sign sign;
+	br_rsa_pkcs1_vrfy vrfy;
+
+	pub = br_rsa_i62_public_get();
+	priv = br_rsa_i62_private_get();
+	sign = br_rsa_i62_pkcs1_sign_get();
+	vrfy = br_rsa_i62_pkcs1_vrfy_get();
+	if (pub) {
+		if (!priv || !sign || !vrfy) {
+			fprintf(stderr, "Inconsistent i62 availability\n");
+			exit(EXIT_FAILURE);
+		}
+		test_RSA_core("RSA i62 core", pub, priv);
+		test_RSA_sign("RSA i62 sign", priv, sign, vrfy);
+	} else {
+		if (priv || sign || vrfy) {
+			fprintf(stderr, "Inconsistent i62 availability\n");
+			exit(EXIT_FAILURE);
+		}
+		printf("Test RSA i62: UNAVAILABLE\n");
+	}
 }
 
 #if 0
@@ -4968,6 +5085,39 @@ test_EC_inner(const char *sk, const char *sU,
 }
 
 static void
+test_EC_P256_carry_inner(const br_ec_impl *impl, const char *sP, const char *sQ)
+{
+	unsigned char P[65], Q[sizeof P], k[1];
+	size_t plen, qlen;
+
+	plen = hextobin(P, sP);
+	qlen = hextobin(Q, sQ);
+	if (plen != sizeof P || qlen != sizeof P) {
+		fprintf(stderr, "KAT is incorrect\n");
+		exit(EXIT_FAILURE);
+	}
+	k[0] = 0x10;
+	if (impl->mul(P, plen, k, 1, BR_EC_secp256r1) != 1) {
+		fprintf(stderr, "P-256 multiplication failed\n");
+		exit(EXIT_FAILURE);
+	}
+	check_equals("P256_carry", P, Q, plen);
+	printf(".");
+	fflush(stdout);
+}
+
+static void
+test_EC_P256_carry(const br_ec_impl *impl)
+{
+	test_EC_P256_carry_inner(impl,
+		"0435BAA24B2B6E1B3C88E22A383BD88CC4B9A3166E7BCF94FF6591663AE066B33B821EBA1B4FC8EA609A87EB9A9C9A1CCD5C9F42FA1365306F64D7CAA718B8C978",
+		"0447752A76CA890328D34E675C4971EC629132D1FC4863EDB61219B72C4E58DC5E9D51E7B293488CFD913C3CF20E438BB65C2BA66A7D09EABB45B55E804260C5EB");
+	test_EC_P256_carry_inner(impl,
+		"04DCAE9D9CE211223602024A6933BD42F77B6BF4EAB9C8915F058C149419FADD2CC9FC0707B270A1B5362BA4D249AFC8AC3DA1EFCA8270176EEACA525B49EE19E6",
+		"048DAC7B0BE9B3206FCE8B24B6B4AEB122F2A67D13E536B390B6585CA193427E63F222388B5F51D744D6F5D47536D89EEEC89552BCB269E7828019C4410DFE980A");
+}
+
+static void
 test_EC_KAT(const char *name, const br_ec_impl *impl, uint32_t curve_mask)
 {
 
@@ -4979,6 +5129,7 @@ test_EC_KAT(const char *name, const br_ec_impl *impl, uint32_t curve_mask)
 			"C9AFA9D845BA75166B5C215767B1D6934E50C3DB36E89B127B8A622B120F6721",
 			"0460FED4BA255A9D31C961EB74C6356D68C049B8923B61FA6CE669622E60F29FB67903FE1008B8BC99A41AE9E95628BC64F2F1B20C2D7E9F5177A3C294D4462299",
 			impl, BR_EC_secp256r1);
+		test_EC_P256_carry(impl);
 	}
 	if (curve_mask & ((uint32_t)1 << BR_EC_secp384r1)) {
 		test_EC_inner(
@@ -5603,6 +5754,108 @@ test_ECDSA_i15(void)
 	fflush(stdout);
 }
 
+static void
+test_modpow_i31(void)
+{
+	br_hmac_drbg_context hc;
+	int k;
+
+	printf("Test ModPow/i31: ");
+
+	br_hmac_drbg_init(&hc, &br_sha256_vtable, "seed modpow", 11);
+	for (k = 10; k <= 500; k ++) {
+		size_t blen;
+		unsigned char bm[128], bx[128], bx1[128], bx2[128];
+		unsigned char be[128];
+		unsigned mask;
+		uint32_t x1[35], m1[35];
+		uint16_t x2[70], m2[70];
+		uint32_t tmp1[1000];
+		uint16_t tmp2[2000];
+
+		blen = (k + 7) >> 3;
+		br_hmac_drbg_generate(&hc, bm, blen);
+		br_hmac_drbg_generate(&hc, bx, blen);
+		br_hmac_drbg_generate(&hc, be, blen);
+		bm[blen - 1] |= 0x01;
+		mask = 0xFF >> ((int)(blen << 3) - k);
+		bm[0] &= mask;
+		bm[0] |= (mask - (mask >> 1));
+		bx[0] &= (mask >> 1);
+
+		br_i31_decode(m1, bm, blen);
+		br_i31_decode_mod(x1, bx, blen, m1);
+		br_i31_modpow_opt(x1, be, blen, m1, br_i31_ninv31(m1[1]),
+			tmp1, (sizeof tmp1) / (sizeof tmp1[0]));
+		br_i31_encode(bx1, blen, x1);
+
+		br_i15_decode(m2, bm, blen);
+		br_i15_decode_mod(x2, bx, blen, m2);
+		br_i15_modpow_opt(x2, be, blen, m2, br_i15_ninv15(m2[1]),
+			tmp2, (sizeof tmp2) / (sizeof tmp2[0]));
+		br_i15_encode(bx2, blen, x2);
+
+		check_equals("ModPow i31/i15", bx1, bx2, blen);
+
+		printf(".");
+		fflush(stdout);
+	}
+
+	printf(" done.\n");
+	fflush(stdout);
+}
+
+static void
+test_modpow_i62(void)
+{
+	br_hmac_drbg_context hc;
+	int k;
+
+	printf("Test ModPow/i62: ");
+
+	br_hmac_drbg_init(&hc, &br_sha256_vtable, "seed modpow", 11);
+	for (k = 10; k <= 500; k ++) {
+		size_t blen;
+		unsigned char bm[128], bx[128], bx1[128], bx2[128];
+		unsigned char be[128];
+		unsigned mask;
+		uint32_t x1[35], m1[35];
+		uint16_t x2[70], m2[70];
+		uint64_t tmp1[500];
+		uint16_t tmp2[2000];
+
+		blen = (k + 7) >> 3;
+		br_hmac_drbg_generate(&hc, bm, blen);
+		br_hmac_drbg_generate(&hc, bx, blen);
+		br_hmac_drbg_generate(&hc, be, blen);
+		bm[blen - 1] |= 0x01;
+		mask = 0xFF >> ((int)(blen << 3) - k);
+		bm[0] &= mask;
+		bm[0] |= (mask - (mask >> 1));
+		bx[0] &= (mask >> 1);
+
+		br_i31_decode(m1, bm, blen);
+		br_i31_decode_mod(x1, bx, blen, m1);
+		br_i62_modpow_opt(x1, be, blen, m1, br_i31_ninv31(m1[1]),
+			tmp1, (sizeof tmp1) / (sizeof tmp1[0]));
+		br_i31_encode(bx1, blen, x1);
+
+		br_i15_decode(m2, bm, blen);
+		br_i15_decode_mod(x2, bx, blen, m2);
+		br_i15_modpow_opt(x2, be, blen, m2, br_i15_ninv15(m2[1]),
+			tmp2, (sizeof tmp2) / (sizeof tmp2[0]));
+		br_i15_encode(bx2, blen, x2);
+
+		check_equals("ModPow i62/i15", bx1, bx2, blen);
+
+		printf(".");
+		fflush(stdout);
+	}
+
+	printf(" done.\n");
+	fflush(stdout);
+}
+
 static int
 eq_name(const char *s1, const char *s2)
 {
@@ -5670,10 +5923,12 @@ static const struct {
 	STU(ChaCha20_ct),
 	STU(Poly1305_ctmul),
 	STU(Poly1305_ctmul32),
+	STU(Poly1305_ctmulq),
 	STU(Poly1305_i15),
 	STU(RSA_i15),
 	STU(RSA_i31),
 	STU(RSA_i32),
+	STU(RSA_i62),
 	STU(GHASH_ctmul),
 	STU(GHASH_ctmul32),
 	STU(GHASH_ctmul64),
@@ -5689,6 +5944,8 @@ static const struct {
 	STU(EC_c25519_m31),
 	STU(ECDSA_i15),
 	STU(ECDSA_i31),
+	STU(modpow_i31),
+	STU(modpow_i62),
 	{ 0, 0 }
 };
 

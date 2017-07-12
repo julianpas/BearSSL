@@ -417,6 +417,19 @@ test_speed_poly1305_ctmul32(void)
 }
 
 static void
+test_speed_poly1305_ctmulq(void)
+{
+	br_poly1305_run bp;
+
+	bp = br_poly1305_ctmulq_get();
+	if (bp == 0) {
+		printf("%-30s UNAVAILABLE\n", "Poly1305 (ctmulq)");
+	} else {
+		test_speed_poly1305_inner("Poly1305 (ctmulq)", bp);
+	}
+}
+
+static void
 test_speed_poly1305_i15(void)
 {
 	test_speed_poly1305_inner("Poly1305 (i15)", &br_poly1305_i15_run);
@@ -651,6 +664,21 @@ test_speed_rsa_i32(void)
 {
 	test_speed_rsa_inner("RSA i32",
 		&br_rsa_i32_public, &br_rsa_i32_private);
+}
+
+static void
+test_speed_rsa_i62(void)
+{
+	br_rsa_public pub;
+	br_rsa_private priv;
+
+	pub = br_rsa_i62_public_get();
+	priv = br_rsa_i62_private_get();
+	if (pub) {
+		test_speed_rsa_inner("RSA i62", pub, priv);
+	} else {
+		printf("%-30s UNAVAILABLE\n", "RSA i62");
+	}
 }
 
 static void
@@ -1260,11 +1288,13 @@ static const struct {
 
 	STU(poly1305_ctmul),
 	STU(poly1305_ctmul32),
+	STU(poly1305_ctmulq),
 	STU(poly1305_i15),
 
 	STU(rsa_i15),
 	STU(rsa_i31),
 	STU(rsa_i32),
+	STU(rsa_i62),
 	STU(ec_prime_i15),
 	STU(ec_prime_i31),
 	STU(ec_p256_m15),
