@@ -871,8 +871,8 @@ typedef struct {
 	/*
 	 * Secure renegotiation (RFC 5746): 'reneg' can be:
 	 *   0   first handshake (server support is not known)
-	 *   1   server does not support secure renegotiation
-	 *   2   server supports secure renegotiation
+	 *   1   peer does not support secure renegotiation
+	 *   2   peer supports secure renegotiation
 	 *
 	 * The saved_finished buffer contains the client and the
 	 * server "Finished" values from the last handshake, in
@@ -2063,8 +2063,9 @@ void br_ssl_engine_close(br_ssl_engine_context *cc);
  *
  * If the engine is failed or closed, or if the peer is known not to
  * support secure renegotiation (RFC 5746), or if renegotiations have
- * been disabled with the `BR_OPT_NO_RENEGOTIATION` flag, then this
- * function returns 0 and nothing else happens.
+ * been disabled with the `BR_OPT_NO_RENEGOTIATION` flag, or if there
+ * is buffered incoming application data, then this function returns 0
+ * and nothing else happens.
  *
  * Otherwise, this function returns 1, and a renegotiation attempt is
  * triggered (if a handshake is already ongoing at that point, then
@@ -3218,6 +3219,19 @@ typedef struct {
  */
 void br_ssl_session_cache_lru_init(br_ssl_session_cache_lru *cc,
 	unsigned char *store, size_t store_len);
+
+/**
+ * \brief Forget an entry in an LRU session cache.
+ *
+ * The session cache context must have been initialised. The entry
+ * with the provided session ID (of exactly 32 bytes) is looked for
+ * in the cache; if located, it is disabled.
+ *
+ * \param cc   session cache context.
+ * \param id   session ID to forget.
+ */
+void br_ssl_session_cache_lru_forget(
+	br_ssl_session_cache_lru *cc, const unsigned char *id);
 
 /**
  * \brief Context structure for a SSL server.
