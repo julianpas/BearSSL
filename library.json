@@ -15,5 +15,5 @@
     "license": "MIT",
     "frameworks": "*",
     "platforms": "*",
-    "include": "src"
+    "include": ["src", "inc"]
 }
